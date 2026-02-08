@@ -17,12 +17,10 @@ class PointFaceEncoder(nn.Module):
         self.sa2 = SetAbstraction(1024, 0.20, 32, 64, 128, 32)
         self.sa3 = SetAbstraction(512, 0.40, 32, 128, 256, 64)
         self.sa4 = SetAbstraction(256, 0.60, 32, 256, 512, 128)
-        # 마지막 레이어는 보통 Global Feature를 위해 점 개수를 줄이거나 radius를 크게 함
-        self.sa5 = SetAbstraction(64, 0.80, 32, 512, 1024, 256) 
         
         # Final Fully Connected Layer 
         self.fc = nn.Sequential(
-            nn.Linear(1024, 512),
+            nn.Linear(512, 512),
             nn.BatchNorm1d(512),
         )
 
@@ -38,10 +36,9 @@ class PointFaceEncoder(nn.Module):
         l2_xyz, l2_points = self.sa2(l1_xyz, l1_points)
         l3_xyz, l3_points = self.sa3(l2_xyz, l2_points)
         l4_xyz, l4_points = self.sa4(l3_xyz, l3_points)
-        l5_xyz, l5_points = self.sa5(l4_xyz, l4_points)
         
-        # Global Max Pooling: (B, 1024, 64) -> (B, 1024)
-        global_feature = torch.max(l5_points, 2)[0]
+        # Global Max Pooling: (B, 512, 256) -> (B, 512)
+        global_feature = torch.max(l4_points, 2)[0]
         
         # Embedding 생성 (B, 512)
         embedding = self.fc(global_feature)

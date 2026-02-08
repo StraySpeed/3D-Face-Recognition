@@ -32,7 +32,7 @@ class RSConv(nn.Module):
         """
         B, C, npoint, nsample = grouped_features.shape
         
-        # 1. Relation Prior (h_ij) 생성 [cite: 212]
+        # 1. Relation Prior (h_ij) 생성
         # 중심점 확장: (B, 3, npoint, 1) -> (B, 3, npoint, nsample)
         center_xyz = new_xyz.unsqueeze(-1).repeat(1, 1, 1, nsample)
         
