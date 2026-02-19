@@ -211,3 +211,6 @@ dummy_dataset/
 dataset/
 .DS_Store
 checkpoints/
+dataset_matching/
+gallery_storage/
+logs/

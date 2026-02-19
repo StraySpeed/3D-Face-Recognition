@@ -133,19 +133,3 @@ def sample_and_group(npoint, radius, nsample, xyz, points):
         grouped_points = grouped_features
 
     return new_xyz_trans, grouped_xyz, grouped_points
-
-# --- 의존성 헬퍼 함수 (앞서 설명한 내용의 요약) ---
-def index_points(points, idx):
-    """
-    points: (B, N, C)
-    idx: (B, S) or (B, S, K)
-    """
-    device = points.device
-    B = points.shape[0]
-    view_shape = list(idx.shape)
-    view_shape[1:] = [1] * (len(view_shape) - 1)
-    repeat_shape = list(idx.shape)
-    repeat_shape[0] = 1
-    batch_indices = torch.arange(B, dtype=torch.long).to(device).view(view_shape).repeat(repeat_shape)
-    new_points = points[batch_indices, idx, :]
-    return new_points

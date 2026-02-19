@@ -5,13 +5,15 @@ import torch.optim as optim
 from model.pointface import PointFaceNet
 from model.modules.featuresimloss import FeatureSimilarityLoss
 from model.loader import get_dataloader
+import time, datetime
+from logger import get_logger
 
 # 1. 모델 및 손실 함수 설정
-#device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') # M1은 'mps'
-device = torch.device('mps' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#device = torch.device('mps' if torch.cuda.is_available() else 'cpu')
 
-# num_classes: 데이터셋의 총 ID 개수 (예: 100명)
-model = PointFaceNet(num_classes=100).to(device)
+# num_classes: 데이터셋의 총 ID 개수
+model = PointFaceNet(num_classes=143).to(device)
 
 # 람다(lambda) 값 (두 loss 간의 비율)
 lambda_factor = 1.0 
@@ -87,7 +89,7 @@ def train_one_epoch(dataloader, model, optimizer, epoch):
         
         # DEBUG 출력
         if batch_idx % 10 == 0:
-            print(f"[DEBUG] Epoch [{epoch}] Batch [{batch_idx}] Loss: {loss.item():.4f} "
+            print(f"Epoch [{epoch}] Batch [{batch_idx}] Loss: {loss.item():.4f} "
                   f"(Softmax: {loss_softmax.item():.4f}, Sim: {loss_sim.item():.4f})")
 
 # 3. Checkpoint
@@ -103,7 +105,7 @@ def save_checkpoint(model, optimizer, epoch, save_dir="./checkpoints"):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     
-    # 저장할 파일 경로 (예: ./checkpoints/pointface_epoch_\d\d\d.pth)
+    # 저장할 파일 경로
     save_path = os.path.join(save_dir, f"pointface_epoch_{epoch:03d}.pth")
     
     # 저장할 데이터 딕셔너리 구성
@@ -114,14 +116,25 @@ def save_checkpoint(model, optimizer, epoch, save_dir="./checkpoints"):
     }
     
     torch.save(checkpoint, save_path)
-    print(f"[DEBUG] Model saved to {save_path}")
+    print(f"Model saved to {save_path}")
 
 
 if __name__ == '__main__':
-    # 테스트용 랜덤 데이터
-    root_folder = 'dummy_dataset'
-    train_loader = get_dataloader(root_folder, batch_size=4, num_workers=0)
-    for epoch in range(200):
+    # 로거 생성
+    logger = get_logger(name='train')
+    print = logger.info
+
+    root_folder = 'dataset/umbdb'
+    train_loader = get_dataloader(root_folder, batch_size=32, num_workers=0)
+    max_epoch = 200
+    for epoch in range(max_epoch):
+
+        start_time = time.time()
         train_one_epoch(train_loader, model, optimizer, epoch)
+        end_time = time.time()
+        epoch_duration = end_time - start_time
+        time_str = str(datetime.timedelta(seconds=int(epoch_duration)))
+
+        print(f"Epoch [{epoch}/{max_epoch}] Time: {time_str} ({epoch_duration:.2f}s)")
         if (epoch + 1) % 10 == 0:
             save_checkpoint(model, optimizer, epoch + 1)

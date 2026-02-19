@@ -1,11 +1,9 @@
-# Python 3.11.4
-# Mac M1 Ventura 13.5.2(22G91)
-# numpy==2.4.2
-# torch==2.10.0
-# tenseal==0.3.15
 numpy
 torch
 tenseal
+
+# 데이터 시각화용
+matplotlib
 
 # 3D 데이터 확인용
 open3d

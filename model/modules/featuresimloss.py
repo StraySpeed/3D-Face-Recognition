@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 class FeatureSimilarityLoss(nn.Module):
     """
@@ -8,7 +7,7 @@ class FeatureSimilarityLoss(nn.Module):
     L_sim = max(0, Dist(Anchor, Positive) - Dist(Anchor, Negative) + margin)
 
     ## Distance
-    Cosine Distance (1 - Cosine Similarity)
+    Cosine Distance
     """
     def __init__(self, margin=0.35):
         super(FeatureSimilarityLoss, self).__init__()

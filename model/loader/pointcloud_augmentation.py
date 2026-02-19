@@ -2,8 +2,9 @@ import numpy as np
 import torch
 
 class PointCloudAugmentation:
-    def __init__(self, num_points=5000):
+    def __init__(self, num_points=5000, train=True):
         self.num_points = num_points
+        self.train = train
 
     def __call__(self, points, train=True):
         """
@@ -16,7 +17,7 @@ class PointCloudAugmentation:
         # 2. Normalization (Unit Sphere) 
         points = self.normalize(points)
         
-        if train:
+        if train and self.train:
             # 3. Data Augmentation
             if np.random.random() > 0.5:
                 points = self.random_scale(points)
@@ -27,7 +28,7 @@ class PointCloudAugmentation:
         return torch.from_numpy(points.astype(np.float32)).transpose(1, 0)
 
     def random_sample(self, points):
-        # Random Sampling (논문은 Farthest Point Sampling 사용했음!!)
+        # Random Sampling (논문은 Farthest Point Sampling 사용했으나, 너무 연산 많아져서 여기서는 랜덤 샘플링)
         choice = np.random.choice(points.shape[0], self.num_points, replace=True)
         return points[choice, :]
 
@@ -61,7 +62,7 @@ class PointCloudAugmentation:
             [-np.sin(theta_y), 0, np.cos(theta_y)]
         ])
         
-        # Rotation Matrix (Pitch - X축 회전으로 근사하거나 논문 의도에 맞춰 축 설정)
+        # Rotation Matrix (Pitch - X축 회전으로 근사하거나 논문에 맞춰 축 설정)
         rot_p = np.array([
             [1, 0, 0],
             [0, np.cos(theta_p), -np.sin(theta_p)],

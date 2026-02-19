@@ -6,7 +6,9 @@ from .pointcloud_augmentation import PointCloudAugmentation
 class PointFaceDataset(Dataset):
     def __init__(self, data_root, train=True):
         """
-        data_root: 데이터 폴더 (구조: root/ID/sample.npy)
+        # 데이터셋 로더
+
+        :param data_root: 데이터 폴더 (구조: root/ID/sample.npy)
         """
         self.data_root = data_root
         self.train = train
@@ -17,10 +19,10 @@ class PointFaceDataset(Dataset):
         # subjects: {label_idx: [path1, path2, ...]}
         self.subjects = self._load_data(data_root)
         
-        # 2. Pair Generation (Algorithm 1 Implementation)
+        # 2. Pair Generation
         self._generate_pairs()
         
-        print(f"[DEBUG] Dataset Loaded: {len(self.subjects)} subjects, {len(self.pairs)} pairs generated.")
+        print(f"Dataset Loaded: {len(self.subjects)} subjects, {len(self.pairs)} pairs generated.")
 
     def _load_data(self, root):
         # 폴더 구조를 읽어서 ID별로 파일 경로를 저장
@@ -67,8 +69,7 @@ class PointFaceDataset(Dataset):
     def __getitem__(self, idx):
         path_anchor, path_positive, label = self.pairs[idx]
         
-        # 1. 파일 로드 (여기서는 .npy 가정)
-        # 실제 데이터 포맷에 따라 np.load, plyfile 등 사용
+        # 1. 파일 로드 (여기서는 .npy)
         pc_anchor = np.load(path_anchor)[:, :3] # (N, 3) XYZ 좌표만 사용
         pc_positive = np.load(path_positive)[:, :3]
         
@@ -85,14 +86,13 @@ def get_dataloader(data_root, batch_size=32, num_workers=4):
     dataset = PointFaceDataset(data_root=data_root, train=True)
     
     # DataLoader 생성
-    # shuffle=True는 필수 (배치 내에서 Hardest Negative를 찾기 위해 섞여야 함)
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True, # GPU 전송 속도 향상
-        drop_last=True   # 배치 크기가 일정해야 Loss 계산이 용이함
+        drop_last=True   # 배치 크기가 일정해야 Loss 계산이 용이
     )
     
     return loader

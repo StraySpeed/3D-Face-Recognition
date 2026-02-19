@@ -11,7 +11,7 @@ class PointFaceEncoder(nn.Module):
         
         # features with dimension of 64, 128, 256, 512, 1024 
         # (npoint, radius, nsample, in_channel, out_channel, hidden_mlp)
-        # radius는 PointNet++ 일반 설정(점진적 증가)을 따름
+        # radius는 PointNet++처럼 점진적 증가
         
         self.sa1 = SetAbstraction(2048, 0.10, 32, input_channel, 64, 16)
         self.sa2 = SetAbstraction(1024, 0.20, 32, 64, 128, 32)
