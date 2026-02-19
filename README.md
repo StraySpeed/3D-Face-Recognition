@@ -4,12 +4,12 @@
 
 ------
 ## A. Introduction
-1. **프로젝트 배경**
+1. **프로젝트 배경**      
 3D 데이터(여기서는 point cloud 형태의 데이터)로 구성되어있는 얼굴 인식 시스템을 구현하고 암호화한 아키텍처를 제시함    
 이게 얼마나 성능이 나올까?에 대해 알아보고 클라이언트-서버 간 구조를 제시   
 *중앙대학교 2025학년도 동계 SW·AI학부연구생 프로그램 대상   
     
-2. **참조한 논문**
+2. **참조한 논문**      
 _**PointFace: Point Cloud Encoder-Based Feature Embedding for 3D Face Recognition**_      
 _Changyuan Jiang , Shisong Lin , Wei Chen , Feng Liu , Member, IEEE, and Linlin Shen , Senior Member, IEEE_      
 _IEEE TRANSACTIONS ON BIOMETRICS, BEHAVIOR, AND IDENTITY SCIENCE, VOL. 4, NO. 4, OCTOBER 2022_      
@@ -38,36 +38,38 @@ Encryption(암호화)시에 r(noise, error)를 넣음
 => 이 횟수를 넘어가면 오차가 커져서 원래대로 복호화하지 못함
 
 ### - BioHashing
-생체 정보와 토큰을 결합하여 보안성이 높고 Cancelable한 생체 템플릿을 생성하는 기술
+생체 정보와 토큰을 결합하여 보안성이 높고 Cancelable한 생체 템플릿을 생성하는 기술      
 
-1. **특징 추출**
-얼굴, 지문 등에서 고정된 길이의 특징 벡터 $v$를 추출함
+1. **특징 추출**       
+얼굴, 지문 등에서 고정된 길이의 특징 벡터 $v$를 추출함      
 
-2. **토큰 생성**
+2. **토큰 생성**       
 토큰, 비밀번호로부터 시드(seed)를 얻음      
 해당 시드를 이용하여 Pseudo Random Number를 생성함      
 
-3. **직교 투영**
-Gaussian Distribution을 이용하여 랜덤 Matrix를 생성함
+3. **직교 투영**       
+Gaussian Distribution을 이용하여 랜덤 Matrix를 생성함      
 Gram-Schmidt를 이용하여 Orthogonal Matrix $R$를 생성함      
-해당 Matrix를 생체 템플릿에 내적함
+해당 Matrix를 생체 템플릿에 내적함      
+
 $$
 x = R \cdot v
 $$
 
-4. **이진화**
+4. **이진화**       
 내적한 결과값이 0보다 크면 1, 작으면 0으로 변환함
+
 $$
 b_i = \begin{cases} 1 \ \ if \ \ x_i > \tau \\ 0 \ \ otherwise\end{cases}
 $$
 
-* 특이사항
-FAR, FRR이 감소하는 효과가 있음
-1. FAR(False Accept Rate)의 감소 이유
+* 특이사항      
+FAR, FRR이 감소하는 효과가 있음       
+1. FAR(False Accept Rate)의 감소 이유       
 개인의 특징 + 개인의 비밀 키(시드)라는 두 개의 요소가 필요하므로      
 비슷한 특징의 인물을 더이상 착각하지 않게 됨      
 
-2. FRR(False Reject Rate)의 감소 이유
+2. FRR(False Reject Rate)의 감소 이유       
 이진화를 거치게 되므로 인식 시의 노이즈가 흡수됨      
 등록된 템플릿과 약간 다르더라도 임계값에 따라 0, 1로 분류되므로 FRR이 감소하게 됨     
 
@@ -122,10 +124,10 @@ _**Figure 4.** Unseen Test (200 Epoch)_
 부정 쌍에 대해서는 유사도가 낮고 긍정 쌍에 대해서는 유사도가 높음      
 어느 정도 인물의 특징을 잘 구분할 수는 있으나, 긍정 쌍(동일 인물)을 구분해내는 능력이 부족하다고 판단됨      
 
-**Rank-1 Accuracy**
-학습에 사용하지 않은 23명의 데이터를 이용해서 Rank-1 Accuracy를 계산
-Gallery: 23, Probes: 199
-Rank-1 Accuracy: 84.92% (169/199)
+**Rank-1 Accuracy**       
+학습에 사용하지 않은 23명의 데이터를 이용해서 Rank-1 Accuracy를 계산       
+Gallery: 23, Probes: 199        
+Rank-1 Accuracy: 84.92% (169/199)      
 
 
 ### - Matching Result
@@ -157,8 +159,9 @@ FAR을 낮게 유지하기 위해서 EER에서 옆으로 벗어난 값을 Thresh
 #### Biohashing Threshold
 <img src="/docs/Hamming_Distance_Distribution.png" width="100%" height="100%" title="Hamming_Distance_Distribution" alt="Hamming_Distance_Distribution"></img>
 _**Figure 7.** Hamming Distance Distribution_   
-이론적으로 Threshold의 안전 마지노선은 0.35임
-여기서는 Threshold로 0.3을 사용함
+이론적으로 Threshold의 안전 마지노선은 0.35임      
+(다른 사람이 우연히 비슷하게 나올 확률이 약 천억분의 1이 되는 지점)       
+여기서는 Threshold로 0.3을 사용함       
 
 
 #### Matching Result
@@ -230,7 +233,10 @@ _**Figure 7.** Hamming Distance Distribution_
 _**Figure 8.** Client-Server Architecture_   
 
 
-현재 구조는 클라이언트에서 특징 추출 -> 서버에서 연산 후 Threshold를 넘었는지 0 1로만 제공 -> 클라이언트가 복호화해서 결과 확인하는 구조
+현재 구조는       
+1. 클라이언트에서 특징 추출       
+2. 서버에서 연산 후 Threshold를 넘었는지 0 1로만 제공       
+3. 클라이언트가 복호화해서 결과 확인하는 구조       
 
 1. Client #1
     |  Preprocessing  |   Extracting Embedding   |  Encrypting  |  Total  |
@@ -250,12 +256,15 @@ _**Figure 8.** Client-Server Architecture_
     정확도 - Total : 222, Correct : 186 (83.78%), Wrong : 37 (16.22%)  
     Total Client = 1.1616 sec, Total Server = 0.0232 sec
 
-이 구조는 Client에서의 연산이 많아지는 구조임 (Client에서 Feature Extractor를 전부 수행하므로)     
-Client에서의 연산을 최대한 줄일 수 있는가?
+이 구조는 Client에서의 연산이 많아지는 구조임       
+(Client에서 Feature Extractor를 전부 수행하므로)        
+Client에서의 연산을 최대한 줄일 수 있는가?       
 
 
-Feature Extractor의 맨 마지막 FC Layer를 서버로 옮기는 구조를 생각중    
-이렇게 되면 클라이언트에서 Global Feature까지만 추출 후 암호화 -> 서버에서 DB와 비교해서 Dot 계산 후 클라이언트로 Norm과 함께 반환(나눗셈 연산 코스트 크므로) -> 클라이언트에서 복호화 후 코사인 유사도를 계산하는 방식이 될 듯
+Feature Extractor의 맨 마지막 FC Layer를 서버로 옮기는 구조를 생각중      
+1. 클라이언트에서 Global Feature까지만 추출 후 암호화       
+2. 서버에서 DB와 비교해서 Dot 계산 후 클라이언트로 Norm과 함께 반환(나눗셈 연산 코스트 크므로)       
+3. 클라이언트에서 복호화 후 코사인 유사도를 계산하는 방식이 될 듯       
 
 
 **(이론상 걸리는 시간)**
