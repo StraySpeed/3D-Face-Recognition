@@ -2,10 +2,9 @@ import torch
 import numpy as np
 import os
 import matplotlib.pyplot as plt
-from torch.utils.data import DataLoader
+from model.loader import get_dataloader
 from model.pointface import PointFaceNet
-from model.loader.pointface_dataset import PointFaceDataset
-from model.loader.pointcloud_augmentation import PointCloudAugmentation
+from config import CONFIG
 
 def get_test_identities(data_root):
     all_classes = sorted([
@@ -23,11 +22,15 @@ def extract_embeddings(model, loader, device):
     
     print("Extracting features...")
     with torch.no_grad():
-        for anchors, positives, batch_labels in loader:
-            anchors = anchors.to(device)
-            
+        for anchor_pre_data, pos_pre_data, batch_labels in loader:
+            # Anchor와 Positive 각각을 디바이스(GPU)로 이동
+            for key in ['rel', 'idx']:
+                for stage in ['s1', 's2', 's3', 's4']:
+                    anchor_pre_data[key][stage] = anchor_pre_data[key][stage].to(device)
+                    pos_pre_data[key][stage] = pos_pre_data[key][stage].to(device)
+            batch_labels = batch_labels.to(device)
             # (B, 3, N) -> (B, 512)
-            emb = model(anchors)
+            emb = model(anchor_pre_data)
             
             # CPU로 이동 및 저장
             embeddings.append(emb.cpu().numpy())
@@ -113,9 +116,9 @@ def plot_distributions(pos_scores, neg_scores, threshold, savename):
 
 if __name__ == "__main__":
     # 설정
-    DATA_ROOT = "./dataset_matching/umbdb"  # 데이터셋 경로
-    MODEL_PATH = "./checkpoints/" # 학습된 모델 경로
-    DEVICE = torch.device('cpu')
+    DATA_ROOT = CONFIG["PATH"]["gallery_dir"] # 데이터셋 경로
+    MODEL_PATH = CONFIG["PATH"]["checkpoint_dir"] # 데이터셋 경로
+    DEVICE = CONFIG["DEVICE"]
     
     # 1. Unseen Identity 리스트 확보
     test_identities = get_test_identities(DATA_ROOT)
@@ -127,25 +130,13 @@ if __name__ == "__main__":
 
     # 2. Dataset & Loader 생성
     # 테스트 시에는 Augmentation OFF (회전 등 금지), 오직 정규화만 수행
-    test_transform = PointCloudAugmentation() 
-    
-    test_dataset = PointFaceDataset(
-        DATA_ROOT, 
-        train=False
-    )
-    
-    test_loader = DataLoader(
-        test_dataset, 
-        batch_size=32, 
-        shuffle=False, 
-        num_workers=0
-    )
+    test_loader = get_dataloader(DATA_ROOT, CONFIG["TRAIN"]["batch_size"], CONFIG["TRAIN"]["num_workers"], False)
     
     # 3. 모델 로드
     # 학습 때 num_classes=143으로 했으므로 로드할 때도 맞춰야 에러가 안 남
     # (임베딩 추출에는 마지막 레이어를 안 쓰므로 개수는 상관 없지만 weight shape 맞추기 위함)
-    model_path = MODEL_PATH + f'pointface_epoch_200.pth'
-    model = PointFaceNet(num_classes=143).to(DEVICE)
+    model_path = os.path.join(MODEL_PATH, 'pointface_epoch_200.pth')
+    model = PointFaceNet(num_classes=CONFIG["MODEL"]["num_classes"]).to(DEVICE)
     
     try:
         checkpoint = torch.load(model_path, map_location=DEVICE)

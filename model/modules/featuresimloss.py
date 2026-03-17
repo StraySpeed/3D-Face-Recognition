@@ -39,5 +39,5 @@ class FeatureSimilarityLoss(nn.Module):
         # 4. ReLU (0보다 작은 값은 0으로 처리)
         loss = torch.clamp(loss, min=0.0)
         
-        # 5. 평균 Loss 반환
-        return loss.mean()
+        # 5. Loss 반환
+        return loss

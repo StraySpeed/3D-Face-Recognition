@@ -3,14 +3,15 @@ import numpy as np
 import os, glob, time
 from model.pointface import PointFaceNet
 from logger import get_logger
+from config import CONFIG
 
 class FaceRecognizer:
-    def __init__(self, model_path, num_classes=143, device='cpu'):
+    def __init__(self, model_path, device='cpu'):
         self.device = torch.device(device)
         
         # 1. 모델 초기화 및 가중치 로드
         # Inference 시에는 num_classes가 중요하지 않지만 구조를 맞추기 위해 넣음
-        self.model = PointFaceNet(num_classes=num_classes).to(self.device)
+        self.model = PointFaceNet(num_classes=CONFIG["MODEL"]["num_classes"]).to(self.device)
         
         # 가중치 파일 로드
         checkpoint = torch.load(model_path, map_location=self.device)
@@ -25,36 +26,14 @@ class FaceRecognizer:
         self.gallery_dict = {} 
         print(f"Model loaded from {model_path}")
 
-    def preprocess(self, points):
-        """
-        입력 데이터 전처리 (학습 때와 동일해야 함)
-        
-        :param points: (N, 3) numpy array
-        """
-        # 1. 리샘플링 (5000개)
-        if len(points) > 5000:
-            choice = np.random.choice(len(points), 5000, replace=False)
-            points = points[choice, :]
-        elif len(points) < 5000:
-            choice = np.random.choice(len(points), 5000, replace=True)
-            points = points[choice, :]
-            
-        # 2. 정규화 (Center & Scale)
-        points = points - np.mean(points, axis=0)
-        dist = np.max(np.sqrt(np.sum(points ** 2, axis=1)))
-        points = points / dist
-        
-        # 3. 텐서 변환 (1, 3, 5000) - 배치 차원 추가
-        tensor = torch.from_numpy(points.astype(np.float32)).transpose(0, 1)
-        return tensor.unsqueeze(0).to(self.device)
-
     def get_embedding(self, npy_path):
         if not os.path.exists(npy_path): return None
         try:
             points = np.load(npy_path)[:, :3] # XYZ만 사용
-            tensor = self.preprocess(points)
+            pre_data = PointFaceNet.preprocess(points)
+
             with torch.no_grad():
-                embedding = self.model(tensor).cpu().numpy().flatten()
+                embedding = self.model(pre_data).cpu().numpy().flatten()
             
             # L2 Normalize (개별 임베딩도 정규화)
             return embedding / np.linalg.norm(embedding)
@@ -107,7 +86,7 @@ class FaceRecognizer:
                 
         print(f"Total: {len(self.gallery_dict)} IDs.")
 
-    def recognize(self, npy_path, threshold=0.5):
+    def recognize(self, npy_path, threshold=CONFIG["MATCHING"]["threshold"]):
         """
         새로운 얼굴(Probe) 인식
         """
@@ -118,12 +97,12 @@ class FaceRecognizer:
         points = np.load(npy_path)[:, :3]
         print("[1:N Recognization Start]")
         start_time = time.time()
-        input_tensor = self.preprocess(points)
+        pre_data = PointFaceNet.preprocess(points)
         pre_time = time.time()
         print(f"0. Preprocess Time: {pre_time - start_time:.4f}")
         
         with torch.no_grad():
-            probe_emb = self.model(input_tensor).cpu() # (1, 512)
+            probe_emb = self.model(pre_data).cpu() # (1, 512)
 
         emb_time = time.time()
         print(f"1. Embedding Time: {emb_time - pre_time:.4f}")
@@ -153,7 +132,7 @@ class FaceRecognizer:
         else:
             return best_id, best_score
 
-    def recognize_id(self, npy_path, id, threshold=0.5):
+    def recognize_id(self, npy_path, id, threshold=CONFIG["MATCHING"]["threshold"]):
         """
         새로운 얼굴(Probe) 인식
         """
@@ -165,12 +144,12 @@ class FaceRecognizer:
 
         print("[1:1 Recognization Start]")
         start_time = time.time()
-        input_tensor = self.preprocess(points)
+        pre_data = PointFaceNet.preprocess(points)
         pre_time = time.time()
         print(f"0. Preprocess Time: {pre_time - start_time:.4f}")
 
         with torch.no_grad():
-            probe_emb = self.model(input_tensor).cpu() # (1, 512)
+            probe_emb = self.model(pre_data).cpu() # (1, 512)
 
         emb_time = time.time()
         print(f"1. Embedding Time: {emb_time - pre_time:.4f}")
@@ -254,33 +233,36 @@ class FaceRecognizer:
 
 if __name__ == "__main__":
     # 1. 설정
-    print = get_logger(name='matching').info
-    MODEL_PATH = "./checkpoints/pointface_epoch_200.pth" # 학습된 모델 경로
-    GALLERY_DIR = "./dataset_matching/umbdb_unpreprocessed" # 등록할 얼굴들이 있는 폴더
+    print = get_logger(name='matching_v3').info
+    MODEL_PATH = os.path.join(CONFIG["PATH"]["checkpoint_dir"], "pointface_epoch_200.pth")  # 학습된 모델 경로
+    DATABASE_DIR = CONFIG["PATH"]["gallery_storage"] # 저장된 데이터들
+    MATCHING_DIR = CONFIG["PATH"]["gallery_dir"] # 인식할 얼굴들이 있는 폴더
+    THRESHOLD = CONFIG["MATCHING"]["threshold"] # 인식할 얼굴들이 있는 폴더
 
     # 2. 인식기 초기화
-    recognizer = FaceRecognizer(MODEL_PATH, device='cpu')
+    recognizer = FaceRecognizer(MODEL_PATH, 'cpu')
     
     # 3. 갤러리 등록
-    #recognizer.register_gallery(GALLERY_DIR)
+    #recognizer.register_gallery(MATCHING_DIR)
+    #recognizer.save_gallery_individual(DATABASE_DIR)
     # 저장된 데이터가 있으면 로드
-    recognizer.load_gallery_individual("./gallery_storage/umbdb")
+    recognizer.load_gallery_individual(DATABASE_DIR)
 
     # 4. 인식 수행    
-    identities = sorted([d for d in os.listdir(GALLERY_DIR) if os.path.isdir(os.path.join(GALLERY_DIR, d)) and not d.startswith('.')])
+    identities = sorted([d for d in os.listdir(MATCHING_DIR) if os.path.isdir(os.path.join(MATCHING_DIR, d)) and not d.startswith('.')])
     correct = 0; wrong = 0; total = 0; FAR = 0; FRR = 0
     for id in identities:
-        person_dir = os.path.join(GALLERY_DIR, id)
+        person_dir = os.path.join(MATCHING_DIR, id)
         for f in os.listdir(person_dir):
             total += 1
             identity_file = os.path.join(person_dir, f)
             print(f"[Matching] Identity: {id}")
 
             # 1:N Matching
-            #identity, score = recognizer.recognize(identity_file, threshold=0.7)
+            #identity, score = recognizer.recognize(identity_file, threshold=THRESHOLD)
 
             # 1:1 Matching
-            identity, score =recognizer.recognize_id(identity_file, id, threshold=0.7)
+            identity, score =recognizer.recognize_id(identity_file, id, threshold=THRESHOLD)
 
             print(f"[Result] Identity: {identity} (Score: {score:.4f})")
 
@@ -290,4 +272,3 @@ if __name__ == "__main__":
                 wrong += 1
 
     print(f"[Result] Total : {total}, Correct : {correct} ({correct} / {total}), Wrong : {wrong} ({wrong} / {total})")
-    #recognizer.save_gallery_individual("./gallery_storage/umbdb")

@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import os
 from model.pointface import PointFaceNet
+from config import CONFIG
 
 class Rank1Evaluator:
     def __init__(self, model_path, device='cpu'):
@@ -14,32 +15,13 @@ class Rank1Evaluator:
 
         self.model.eval()
 
-    def preprocess(self, points):
-        """ (N, 3) Points -> (1, 3, 5000) Tensor """
-        # 1. Resampling (5000)
-        if len(points) > 5000:
-            choice = np.random.choice(len(points), 5000, replace=False)
-            points = points[choice, :]
-        elif len(points) < 5000:
-            choice = np.random.choice(len(points), 5000, replace=True)
-            points = points[choice, :]
-            
-        # 2. Normalize
-        points = points - np.mean(points, axis=0)
-        dist = np.max(np.sqrt(np.sum(points ** 2, axis=1)))
-        points = points / dist
-        
-        # 3. To Tensor
-        tensor = torch.from_numpy(points.astype(np.float32)).transpose(0, 1)
-        return tensor.unsqueeze(0).to(self.device)
-
     def extract_embedding(self, npy_path):
         if not os.path.exists(npy_path): return None
         try:
             points = np.load(npy_path)[:, :3]
-            tensor = self.preprocess(points)
+            pre_data = PointFaceNet.preprocess(points, device=self.device)
             with torch.no_grad():
-                emb = self.model(tensor).cpu().numpy().flatten()
+                emb = self.model(pre_data).cpu().numpy().flatten()
             # L2 Normalize
             return emb / np.linalg.norm(emb)
         except Exception as e:
@@ -79,6 +61,7 @@ class Rank1Evaluator:
                     
         # Matrix 연산을 위해 Stack
         if not gallery_feats or not probe_feats:
+            print(f"{len(gallery_feats)} gallery feats, {len(probe_feats)} probe feats.")
             return
 
         gallery_matrix = np.array([f[0] for f in gallery_feats]) # (G, 512)
@@ -110,8 +93,8 @@ class Rank1Evaluator:
         return accuracy
 
 if __name__ == "__main__":
-    MODEL_FILE = "./checkpoints/pointface_epoch_200.pth"
-    DATA_DIR = "./dataset_matching/umbdb_unpreprocessed" 
+    MODEL_FILE = os.path.join(CONFIG["PATH"]["checkpoint_dir"], "pointface_epoch_200.pth")
+    DATA_DIR = CONFIG["PATH"]["gallery_dir"]
     
-    evaluator = Rank1Evaluator(MODEL_FILE, device='cpu')
+    evaluator = Rank1Evaluator(MODEL_FILE, device=CONFIG["DEVICE"])
     evaluator.evaluate(DATA_DIR)

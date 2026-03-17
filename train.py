@@ -7,76 +7,88 @@ from model.modules.featuresimloss import FeatureSimilarityLoss
 from model.loader import get_dataloader
 import time, datetime
 from logger import get_logger
+from config import CONFIG
 
 # 1. 모델 및 손실 함수 설정
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 #device = torch.device('mps' if torch.cuda.is_available() else 'cpu')
 
 # num_classes: 데이터셋의 총 ID 개수
-model = PointFaceNet(num_classes=143).to(device)
+model = PointFaceNet(num_classes=CONFIG["MODEL"]["num_classes"]).to(device)
 
 # 람다(lambda) 값 (두 loss 간의 비율)
-lambda_factor = 1.0 
+lambda_factor = CONFIG["TRAIN"]["lambda_factor"]
 
 # 손실 함수 정의
 criterion_softmax = nn.CrossEntropyLoss()
-criterion_similarity = FeatureSimilarityLoss(margin=0.35).to(device)
+criterion_similarity = FeatureSimilarityLoss(margin=CONFIG["TRAIN"]["margin"]).to(device)
 
 # 옵티마이저 (Adam, lr=0.001)
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.Adam(model.parameters(), lr=CONFIG["TRAIN"]["learning_rate"])
+
+
+def create_negative_pre_data(pre_data, shifts=1):
+    """
+    기존 pre_data의 배치(Batch) 차원을 지정한 만큼 이동(shift)시켜 
+    부정 쌍(Negative pre_data)을 생성
+    """
+    neg_pre_data = {'rel': {}, 'idx': {}}
+    
+    # 1. relation_vector 텐서들을 모두 shift
+    for stage in ['s1', 's2', 's3', 's4']:
+        neg_pre_data['rel'][stage] = torch.roll(pre_data['rel'][stage], shifts=shifts, dims=0)
+        
+    # 2. indices 텐서들을 모두 shift
+    for stage in ['s1', 's2', 's3', 's4']:
+        neg_pre_data['idx'][stage] = torch.roll(pre_data['idx'][stage], shifts=shifts, dims=0)
+        
+    return neg_pre_data
 
 # 2. 학습 루프 (Training Loop)
 def train_one_epoch(dataloader, model, optimizer, epoch):
     model.train()
     total_loss = 0.0
     
-    # dataloader는 (anchor_img, positive_img, labels) 형태의 배치를 반환
+    # dataloader는 (anchor_pre_data, pos_pre_data, labels) 형태의 배치를 반환
     # anchor와 positive는 같은 사람(label)의 서로 다른 데이터
-    for batch_idx, (data_anchor, data_positive, labels) in enumerate(dataloader):
-        data_anchor = data_anchor.to(device)   # (B, 3, N)
-        data_positive = data_positive.to(device) # (B, 3, N)
-        labels = labels.to(device)             # (B, )
-
+    for batch_idx, (anchor_pre_data, pos_pre_data, labels) in enumerate(dataloader):
+        # Anchor와 Positive 각각을 디바이스(GPU)로 이동
+        for key in ['rel', 'idx']:
+            for stage in ['s1', 's2', 's3', 's4']:
+                anchor_pre_data[key][stage] = anchor_pre_data[key][stage].to(device)
+                pos_pre_data[key][stage] = pos_pre_data[key][stage].to(device)
+        labels = labels.to(device)
+        
+        # 부정 쌍을 생성
+        # 부정 쌍은 roll을 이용해서 한 칸씩 밀어버림
+        neg_pre_data = create_negative_pre_data(anchor_pre_data)
+        # 라벨도 1칸 Shift하여 Negative 쌍의 원래 라벨을 추적
+        neg_labels = torch.roll(labels, shifts=1, dims=0)
         optimizer.zero_grad()
 
         # --- Forward Pass (Siamese Network) ---
         # 가중치를 공유하는 인코더에 각각 통과시킴
         # emb: 정규화된 임베딩 (L2 Normalized)
         # logits: 신원 분류 결과
-        emb_anchor, logits_anchor = model(data_anchor)
-        emb_positive, logits_positive = model(data_positive)
-
-        # --- Hardest Negative Mining (배치 내에서 찾기) ---
-        # 현재 배치 내의 다른 샘플들을 Negative로 간주
-        # Anchor와 가장 가까운(코사인 유사도가 높은) Negative를 찾음
-        
-        # 1. Anchor와 배치 내 모든 Positive 간의 유사도 행렬 계산
-        # emb_positive.T -> (512, B)
-        # similarity_matrix: (B, B)
-        similarity_matrix = torch.matmul(emb_anchor, emb_positive.T)
-        
-        # 2. 같은 사람(자기 자신 포함)은 마스킹하여 제외
-        # labels: (B, ) -> labels.unsqueeze(1) == labels.unsqueeze(0): (B, B)
-        label_matrix = labels.unsqueeze(1) == labels.unsqueeze(0)
-        
-        # 같은 사람인 곳은 유사도를 매우 낮게(-100) 설정하여 선택되지 않게 함
-        # 이렇게 하면 다른 사람 중에서 가장 유사도가 높은 것을 찾을 수 있음
-        similarity_matrix[label_matrix] = -100.0
-        
-        # 3. 각 Anchor에 대해 가장 유사도가 높은(Hardest) Negative 인덱스 추출
-        hardest_negative_indices = torch.max(similarity_matrix, dim=1)[1]
-        
-        # 4. Hardest Negative 임베딩 가져오기
-        emb_negative = emb_positive[hardest_negative_indices] # (B, 512)
+        emb_anchor, logits_anchor = model(anchor_pre_data)
+        emb_positive, logits_positive = model(pos_pre_data)
+        emb_negative, _ = model(neg_pre_data)
 
         # --- Loss Calculation ---
         # 1. Softmax Loss (Classification) - Anchor와 Positive 모두 잘 분류해야 함
+        
         loss_cls_anchor = criterion_softmax(logits_anchor, labels)
         loss_cls_positive = criterion_softmax(logits_positive, labels)
         loss_softmax = loss_cls_anchor + loss_cls_positive
         
-        # 2. Feature Similarity Loss (Contrastive)
-        loss_sim = criterion_similarity(emb_anchor, emb_positive, emb_negative)
+        # anchor와 negative의 라벨이 다를 때만 1.0, 같으면 0.0이 되는 마스크 생성
+        valid_mask = (labels != neg_labels).float()
+
+        # 개별 샘플의 Loss를 계산
+        raw_sim_loss = criterion_similarity(emb_anchor, emb_positive, emb_negative)
+
+        # 유효한 쌍에 대해서만 Loss를 남기고 평균 계산
+        loss_sim = (raw_sim_loss * valid_mask).sum() / (valid_mask.sum() + 1e-8)
         
         # 3. Total Loss
         loss = loss_softmax + lambda_factor * loss_sim
@@ -93,14 +105,14 @@ def train_one_epoch(dataloader, model, optimizer, epoch):
                   f"(Softmax: {loss_softmax.item():.4f}, Sim: {loss_sim.item():.4f})")
 
 # 3. Checkpoint
-def save_checkpoint(model, optimizer, epoch, save_dir="./checkpoints"):
+def save_checkpoint(model, optimizer, epoch, save_dir="./checkpoints_enc2"):
     """
     모델 가중치와 학습 상태를 저장하는 함수
 
     :param model: PointFace Model
     :param optimizer: Optimizer (Adam)
     :param epoch: epoch
-    :param save_dir: ./checkpoints
+    :param save_dir: ./checkpoints_enc
     """
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -118,16 +130,40 @@ def save_checkpoint(model, optimizer, epoch, save_dir="./checkpoints"):
     torch.save(checkpoint, save_path)
     print(f"Model saved to {save_path}")
 
+def resume_from_checkpoint(checkpoint_path):
+    if os.path.exists(checkpoint_path):
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        
+        # 1. 모델 가중치 복구
+        model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # 2. 옵티마이저 상태 복구 (Adam의 모멘텀 등 내부 상태 유지)
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        # 3. 시작 에포크 업데이트 (저장된 에포크 다음부터 시작)
+        start_epoch = checkpoint['epoch']
+        print(f"Start at {start_epoch} epoch.")
+        return start_epoch
+    return 0
+
 
 if __name__ == '__main__':
     # 로거 생성
-    logger = get_logger(name='train')
+    logger = get_logger(name='train_v3')
     print = logger.info
 
-    root_folder = 'dataset/umbdb'
-    train_loader = get_dataloader(root_folder, batch_size=32, num_workers=0)
-    max_epoch = 200
-    for epoch in range(max_epoch):
+    root_folder = CONFIG["PATH"]["data_root"]
+    batch_size = CONFIG["TRAIN"]["batch_size"]
+    num_workers = CONFIG["TRAIN"]["num_workers"]
+    train_loader = get_dataloader(root_folder, batch_size=batch_size, num_workers=num_workers)
+
+    max_epoch = CONFIG["TRAIN"]["epochs"]
+    start_epoch = 0
+    # 이어서 학습할 파일 경로 지정
+    #CHECKPOINT_PATH = "./checkpoints_enc2/pointface_epoch_070.pth" 
+    #start_epoch = resume_from_checkpoint(CHECKPOINT_PATH)
+    
+    for epoch in range(start_epoch, max_epoch):
 
         start_time = time.time()
         train_one_epoch(train_loader, model, optimizer, epoch)
