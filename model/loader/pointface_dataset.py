@@ -1,7 +1,13 @@
 from torch.utils.data import Dataset, DataLoader
 import os
+import torch
 import numpy as np
 from .pointcloud_augmentation import PointCloudAugmentation
+try:
+    from ..modules.utils.utils import farthest_point_sample, index_points, query_ball_point
+except ImportError:
+    from model.modules.utils.utils import farthest_point_sample, index_points, query_ball_point
+from config import CONFIG
 
 class PointFaceDataset(Dataset):
     def __init__(self, data_root, train=True):
@@ -63,6 +69,24 @@ class PointFaceDataset(Dataset):
                 positive = file_list[(i + 1) % n] # 다음 인덱스 (마지막이면 처음으로)
                 self.pairs.append((anchor, positive, label_idx))
 
+    def _sort_by_y_axis(self, tensor_3xn):
+        """
+        텐서를 Y축(인덱스 1)을 기준으로 오름차순 정렬
+
+        :param tensor_3xn: (3, N) 형태의 텐서
+        """
+        # (3, 5000) -> (5000, 3)으로 변환하여 정렬하기 쉽게 만듦
+        xyz = tensor_3xn.transpose(0, 1) 
+        
+        # Y축(dim=1)을 기준으로 정렬된 인덱스 추출
+        sorted_indices = torch.argsort(xyz[:, 1]) 
+        
+        # 추출한 인덱스를 이용해 원래 텐서의 순서를 재배치
+        sorted_xyz = xyz[sorted_indices]
+        
+        # 다시 원래의 (3, 5000) 형태로 복구
+        return sorted_xyz.transpose(0, 1)
+
     def __len__(self):
         return len(self.pairs)
 
@@ -77,13 +101,85 @@ class PointFaceDataset(Dataset):
         # Anchor와 Positive에 대해 서로 다른 랜덤 증강 적용
         tensor_anchor = self.transform(pc_anchor, train=self.train)
         tensor_positive = self.transform(pc_positive, train=self.train)
-        
-        return tensor_anchor, tensor_positive, label
-    
 
-def get_dataloader(data_root, batch_size=32, num_workers=4):
+        # y축 기준 정렬
+        tensor_anchor = self._sort_by_y_axis(tensor_anchor)
+        tensor_positive = self._sort_by_y_axis(tensor_positive)
+
+        # 3. 각 텐서별 중심점 미리 계산
+        pre_data_anchor = self.get_precomputed_data(tensor_anchor)
+        pre_data_positive = self.get_precomputed_data(tensor_positive)
+
+        return tensor_anchor, pre_data_anchor, tensor_positive, pre_data_positive, label
+    
+    def get_precomputed_data(self, tensor_3xn):
+        """
+        단일 샘플(3, 5000)에 대해 4 -> 2 -> 1 병합 단계별 중심점, idx를 미리 계산
+        """
+        # (3, 5000) -> (1, 5000, 3) 형태로 변환 (FPS 함수 호환을 위함)
+        xyz = tensor_3xn.unsqueeze(0).permute(0, 2, 1) 
+        # SA 파라미터 가져오기
+        params = CONFIG['SA_PARAMS']
+
+        sa1_n = params[0]['npoint']
+        sa2_n = params[1]['npoint']
+        sa3_n = params[2]['npoint']
+        sa4_n = params[3]['npoint']
+
+        pre_data = {'centroids': {}, 'indices': {}}
+        
+        with torch.no_grad():
+            # Y축 기준 정렬
+            sorted_idx = torch.argsort(xyz[:, :, 1], dim=1)
+            xyz = torch.gather(xyz, 1, sorted_idx.unsqueeze(-1).expand(-1, -1, 3))
+
+            # [Stage 1] 4등분 (각 1250개)
+            xyz_chunks = torch.chunk(xyz, 4, dim=1)
+            xyz_b1 = torch.cat(xyz_chunks, dim=0) # (4, 1250, 3)
+            idx1 = farthest_point_sample(xyz_b1, sa1_n)
+            c1 = index_points(xyz_b1, idx1)
+            ball_idx1 = query_ball_point(params[0]['radius'], params[0]['nsample'], xyz_b1, c1)
+
+            pre_data['centroids']['s1'] = c1.permute(0, 2, 1) # (4, 3, 512)
+            pre_data['indices']['s1'] = ball_idx1
+            
+            # [Stage 2] 2개씩 병합
+            c1_chunks = torch.chunk(c1, 4, dim=0)
+            xyz_12 = torch.cat([c1_chunks[0], c1_chunks[1]], dim=1) # (1, 1024, 3)
+            xyz_34 = torch.cat([c1_chunks[2], c1_chunks[3]], dim=1) # (1, 1024, 3)
+            xyz_b2 = torch.cat([xyz_12, xyz_34], dim=0) # (2, 1024, 3)
+            
+            idx2 = farthest_point_sample(xyz_b2, sa2_n)
+            c2 = index_points(xyz_b2, idx2)
+            ball_idx2 = query_ball_point(params[1]['radius'], params[1]['nsample'], xyz_b2, c2)
+
+            pre_data['centroids']['s2'] = c2.permute(0, 2, 1) # (2, 3, 512)
+            pre_data['indices']['s2'] = ball_idx2
+            
+            # [Stage 3] 1개로 병합
+            c2_chunks = torch.chunk(c2, 2, dim=0)
+            xyz_b3 = torch.cat([c2_chunks[0], c2_chunks[1]], dim=1) # (1, 1024, 3)
+            
+            idx3 = farthest_point_sample(xyz_b3, sa3_n)
+            c3 = index_points(xyz_b3, idx3)
+            ball_idx3 = query_ball_point(params[2]['radius'], params[2]['nsample'], xyz_b3, c3)
+
+            pre_data['centroids']['s3'] = c3.permute(0, 2, 1) # (1, 3, 512)
+            pre_data['indices']['s3'] = ball_idx3
+            
+            # [Stage 4] 최종 
+            idx4 = farthest_point_sample(c3, sa4_n)
+            c4 = index_points(c3, idx4)
+            ball_idx4 = query_ball_point(params[3]['radius'], params[3]['nsample'], c3, c4)
+
+            pre_data['centroids']['s4'] = c4.permute(0, 2, 1) # (1, 3, 256)
+            pre_data['indices']['s4'] = ball_idx4
+
+        return pre_data
+    
+def get_dataloader(data_root, batch_size=32, num_workers=4, train=True):
     # Dataset 인스턴스 생성
-    dataset = PointFaceDataset(data_root=data_root, train=True)
+    dataset = PointFaceDataset(data_root=data_root, train=train)
     
     # DataLoader 생성
     loader = DataLoader(

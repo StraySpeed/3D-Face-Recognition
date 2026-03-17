@@ -210,7 +210,8 @@ __marimo__/
 dummy_dataset/
 dataset/
 .DS_Store
-checkpoints/
+checkpoints*/
 dataset_matching/
-gallery_storage/
+gallery_storage*/
 logs/
+hierarchy.txt

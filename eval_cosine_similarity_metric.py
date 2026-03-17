@@ -3,10 +3,11 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 from model.pointface import PointFaceNet
+from config import CONFIG
 
 class CossimEvaluator:
     def __init__(self, model_path, device='cpu'):
-        self.device = torch.device(device)
+        self.device = device
         
         # 모델 초기화
         self.model = PointFaceNet(num_classes=143).to(self.device)
@@ -19,30 +20,14 @@ class CossimEvaluator:
 
         self.gallery = {} # {id: embedding_vector}
 
-    def preprocess(self, points):
-        """ 전처리: Sampling -> Normalize -> Tensor """
-        if len(points) > 5000:
-            choice = np.random.choice(len(points), 5000, replace=False)
-            points = points[choice, :]
-        elif len(points) < 5000:
-            choice = np.random.choice(len(points), 5000, replace=True)
-            points = points[choice, :]
-            
-        points = points - np.mean(points, axis=0)
-        dist = np.max(np.sqrt(np.sum(points**2, axis=1)))
-        points = points / dist
-        
-        tensor = torch.from_numpy(points.astype(np.float32)).transpose(0, 1)
-        return tensor.unsqueeze(0).to(self.device)
-
     def extract_feature(self, npy_path):
         """ 파일에서 Embedding 추출 및 L2 Normalize """
         if not os.path.exists(npy_path): return None
         try:
             points = np.load(npy_path)[:, :3]
-            tensor = self.preprocess(points)
+            tensor, pre_data = PointFaceNet.preprocess(points, device=self.device)
             with torch.no_grad():
-                emb = self.model(tensor).cpu().detach().numpy().flatten()
+                emb = self.model(tensor, pre_data).cpu().numpy().flatten()
             
             # L2 Normalize (Cosine Similarity 필수)
             norm = np.linalg.norm(emb)
@@ -162,11 +147,11 @@ class CossimEvaluator:
         plt.savefig('Cosine_similarity_result.png')
 
 if __name__ == "__main__":
-    MODEL_PATH = "./checkpoints/pointface_epoch_200.pth"
-    GALLERY_DIR = "./gallery_storage/umbdb"
-    TEST_DATA_ROOT = "./dataset_matching/umbdb_unpreprocessed"
+    MODEL_PATH = os.path.join(CONFIG["PATH"]["checkpoint_dir"], "pointface_epoch_200.pth")
+    GALLERY_DIR = CONFIG["PATH"]["gallery_storage"]
+    TEST_DATA_ROOT = CONFIG["PATH"]["gallery_dir"]
 
-    evaluator = CossimEvaluator(MODEL_PATH, device='cpu')
+    evaluator = CossimEvaluator(MODEL_PATH, device=CONFIG["DEVICE"])
     
     # 1. 갤러리 로드
     evaluator.load_gallery(GALLERY_DIR)

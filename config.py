@@ -1,4 +1,5 @@
 # config.py
+import torch
 import os
 
 # 현재 프로젝트의 절대 경로
@@ -8,9 +9,9 @@ CONFIG = {
     # 1. 데이터 및 경로 설정
     "PATH": {
         "data_root": os.path.join(BASE_DIR, "dataset/umbdb"),   # 학습용 데이터 경로
-        "checkpoint_dir": os.path.join(BASE_DIR, "checkpoints_enc"),    # 체크포인트 경로
+        "checkpoint_dir": os.path.join(BASE_DIR, "checkpoints1"),    # 체크포인트 경로
         "gallery_dir": os.path.join(BASE_DIR, "dataset_matching/umbdb_unpreprocessed"), # 매칭할 얼굴 데이터 경로
-        "gallery_storage": os.path.join(BASE_DIR, "gallery_storage2/umbdb"), # 미리 저장된 얼굴 데이터 경로
+        "gallery_storage": os.path.join(BASE_DIR, "gallery_storage1/umbdb"), # 미리 저장된 얼굴 데이터 경로
     },
     
     # 2. 학습(Training) 하이퍼파라미터
@@ -42,5 +43,7 @@ CONFIG = {
     # 5. 매칭(Matching) 설정
     "MATCHING": {
         "threshold": 0.7
-    }
+    },
+    
+    "DEVICE" : 'cuda' if torch.cuda.is_available() else 'cpu'
 }

@@ -2,8 +2,8 @@ import torch
 import numpy as np
 import os
 import matplotlib.pyplot as plt
-from enc_model.loader import get_dataloader
-from enc_model.pointface import PointFaceNet
+from model.loader import get_dataloader
+from model.pointface import PointFaceNet
 from config import CONFIG
 
 def get_test_identities(data_root):
@@ -117,7 +117,7 @@ if __name__ == "__main__":
     # 설정
     DATA_ROOT = CONFIG["PATH"]["gallery_dir"] # 데이터셋 경로
     MODEL_PATH = CONFIG["PATH"]["checkpoint_dir"] # 데이터셋 경로
-    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    DEVICE = CONFIG["DEVICE"]
     
     # 1. Unseen Identity 리스트 확보
     test_identities = get_test_identities(DATA_ROOT)

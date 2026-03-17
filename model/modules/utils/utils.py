@@ -10,8 +10,9 @@ Code by Gemini
 def square_distance(src, dst):
     """
     두 점 집합 간의 유클리드 거리 제곱 계산 (Pure PyTorch)
-    src: (B, N, C)
-    dst: (B, M, C)
+    
+    :param src: (B, N, C)
+    :param dst: (B, M, C)
     """
     B, N, _ = src.shape
     _, M, _ = dst.shape
@@ -23,7 +24,8 @@ def square_distance(src, dst):
 def farthest_point_sample(xyz, npoint):
     """
     가장 먼 점 샘플링 (FPS) - CPU 호환 구현
-    xyz: (B, N, 3)
+    
+    :param xyz: (B, N, 3)
     """
     device = xyz.device
     B, N, C = xyz.shape
@@ -54,6 +56,8 @@ def index_points(points, idx):
     repeat_shape = list(idx.shape)
     repeat_shape[0] = 1
     batch_indices = torch.arange(B, dtype=torch.long).to(device).view(view_shape).repeat(repeat_shape)
+    # 인덱스 넘치면 0으로 바꾸기
+    idx[idx >= points.shape[1]] = 0
     new_points = points[batch_indices, idx, :]
     return new_points
 
@@ -83,53 +87,43 @@ def query_ball_point(radius, nsample, xyz, new_xyz):
     
     return group_idx
 
-def sample_and_group(npoint, radius, nsample, xyz, points):
+def sample_and_group(npoint, radius, nsample, xyz, points, precomputed_centroids=None, precomputed_indices=None):
     """
-    Input:
-        npoint: 샘플링할 중심점 개수 (예: 2048)
-        radius: Ball Query 반경 (예: 0.1)
-        nsample: 각 그룹당 포인트 개수 (예: 32)
-        xyz: (B, 3, N) - 입력 좌표
-        points: (B, C, N) - 입력 특징 (없으면 None)
-    Output:
-        new_xyz: (B, 3, npoint) - 샘플링된 중심점
-        grouped_xyz: (B, 3, npoint, nsample) - 그룹핑된 좌표
-        grouped_points: (B, C+3, npoint, nsample) - 그룹핑된 특징 (좌표 포함 가능)
+    :param precomputed_centroids: (B, 3, npoint) - 미리 계산된 중심점 좌표
+    :param precomputed_indices: (B, npoint, nsample) - 미리 계산된 Ball Query 인덱스
     """
     B, C, N = xyz.shape
-    
-    # 1. Sampling Layer: FPS (Farthest Point Sampling)
-    # 전체 점(N) 중에서 npoint개의 중심점을 뽑습니다.
-    # xyz를 (B, N, 3)으로 transpose해서 넘겨줘야 함 (구현에 따라 다름)
     xyz_t = xyz.permute(0, 2, 1) # (B, N, 3)
-    fps_idx = farthest_point_sample(xyz_t, npoint) # (B, npoint)
     
-    # 중심점 좌표 추출
-    new_xyz = index_points(xyz_t, fps_idx) # (B, npoint, 3)
-    new_xyz_trans = new_xyz.permute(0, 2, 1) # (B, 3, npoint) - 리턴용
+    # 1. Sampling Layer
+    if precomputed_centroids is not None:
+        # FPS를 생략하고 입력받은 중심점을 그대로 사용
+        new_xyz_trans = precomputed_centroids
+        new_xyz = new_xyz_trans.permute(0, 2, 1) # (B, npoint, 3)
+    else:
+        # 기존 로직 (FPS 연산 수행)
+        fps_idx = farthest_point_sample(xyz_t, npoint) # (B, npoint)
+        new_xyz = index_points(xyz_t, fps_idx) # (B, npoint, 3)
+        new_xyz_trans = new_xyz.permute(0, 2, 1) # (B, 3, npoint)
 
     # 2. Grouping Layer: Ball Query
-    # 각 중심점 주변 radius 내의 점들을 nsample개 찾습니다.
-    # idx: (B, npoint, nsample) - 이웃 점들의 인덱스
-    idx = query_ball_point(radius, nsample, xyz_t, new_xyz)
+    if precomputed_indices is not None:
+        # 미리 계산된 인덱스 사용
+        idx = precomputed_indices
+    else:
+        idx = query_ball_point(radius, nsample, xyz_t, new_xyz)
     
-    # 3. Grouping: 인덱스를 이용해 실제 좌표와 특징을 모음
-    # grouped_xyz: (B, npoint, nsample, 3)
+    # 3. Grouping
     grouped_xyz = index_points(xyz_t, idx) 
-    grouped_xyz = grouped_xyz.permute(0, 3, 1, 2) # (B, 3, npoint, nsample)
-    
-    # 4. Feature Gathering
-    # 특징 벡터(points)가 있다면 똑같이 그룹핑합니다.
-    grouped_points = grouped_xyz # 기본적으로 좌표를 특징으로 사용
+    grouped_xyz = grouped_xyz.permute(0, 3, 1, 2)
+    grouped_xyz = grouped_xyz - new_xyz_trans.unsqueeze(-1)
     
     if points is not None:
-        # points: (B, C, N) -> (B, N, C)
         points_t = points.permute(0, 2, 1)
-        grouped_features = index_points(points_t, idx) # (B, npoint, nsample, C)
-        grouped_features = grouped_features.permute(0, 3, 1, 2) # (B, C, npoint, nsample)
-        
-        # 좌표 정보와 기존 특징을 합칠 수도 있고, 기존 특징만 쓸 수도 있음
-        # PointFace의 RSConv는 좌표 관계를 다시 계산하므로 여기선 features만 리턴하거나 합침
-        grouped_points = grouped_features
+        grouped_points = index_points(points_t, idx)
+        grouped_points = grouped_points.permute(0, 3, 1, 2)
+        new_points = torch.cat([grouped_xyz, grouped_points], dim=1)
+    else:
+        new_points = grouped_xyz
 
-    return new_xyz_trans, grouped_xyz, grouped_points
+    return new_xyz_trans, grouped_xyz, new_points

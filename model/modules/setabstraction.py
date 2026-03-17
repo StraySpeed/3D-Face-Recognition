@@ -16,17 +16,18 @@ class SetAbstraction(nn.Module):
         
         self.rsconv = RSConv(in_channel, out_channel, hidden_channel)
 
-    def forward(self, xyz, features):
+    def forward(self, xyz, features, precomputed_centroids=None, precomputed_indices=None):
         """
         :param xyz: (B, 3, N)
         :param features: (B, C, N)
+        :param precomputed_centroids: (B, 3, npoint)    // 미리 중심점을 계산
         """
         # 1. Sampling (FPS) & Grouping (Ball Query)        
         # new_xyz: 샘플링된 중심점 (B, 3, npoint)
         # grouped_xyz: 그룹핑된 점들의 좌표 (B, 3, npoint, nsample)
         # grouped_features: 그룹핑된 점들의 특징 (B, C, npoint, nsample)
         new_xyz, grouped_xyz, grouped_features = sample_and_group(
-            self.npoint, self.radius, self.nsample, xyz, features
+            self.npoint, self.radius, self.nsample, xyz, features, precomputed_centroids, precomputed_indices
         )
         
         # 2. Feature Learning (RSConv)

@@ -53,7 +53,12 @@ class RSConv(nn.Module):
         weights = self.mlp(relation_vector) # (B, C, npoint, nsample)
         
         # 3. Element-wise Product (Hadamard product)
-        weighted_features = grouped_features * weights
+        if grouped_features is not None:
+            if grouped_features.shape[1] > weights.shape[1]:
+                grouped_features = grouped_features[:, 3:, :, :]
+            weighted_features = grouped_features * weights
+        else:
+            weighted_features = weights
         
         # 4. Aggregation (Max Pooling)
         aggregated_features = torch.max(weighted_features, dim=-1)[0] # (B, C, npoint)
