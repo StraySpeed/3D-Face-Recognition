@@ -3,9 +3,10 @@ import numpy as np
 import os, glob, time
 from model.pointface import PointFaceNet
 from logger import get_logger
+from config import CONFIG
 
 class FaceRecognizer:
-    def __init__(self, model_path, num_classes=143, device='cpu'):
+    def __init__(self, model_path, num_classes=CONFIG["MODEL"]['num_classes'], device='cpu'):
         self.device = torch.device(device)
         
         # 1. 모델 초기화 및 가중치 로드
@@ -31,12 +32,13 @@ class FaceRecognizer:
         
         :param points: (N, 3) numpy array
         """
-        # 1. 리샘플링 (5000개)
-        if len(points) > 5000:
-            choice = np.random.choice(len(points), 5000, replace=False)
+        # 1. 리샘플링 (cnt 개)
+        cnt = CONFIG["MODEL"]['num_points']
+        if len(points) > cnt:
+            choice = np.random.choice(len(points), cnt, replace=False)
             points = points[choice, :]
-        elif len(points) < 5000:
-            choice = np.random.choice(len(points), 5000, replace=True)
+        elif len(points) < cnt:
+            choice = np.random.choice(len(points), cnt, replace=True)
             points = points[choice, :]
             
         # 2. 정규화 (Center & Scale)
@@ -44,7 +46,7 @@ class FaceRecognizer:
         dist = np.max(np.sqrt(np.sum(points ** 2, axis=1)))
         points = points / dist
         
-        # 3. 텐서 변환 (1, 3, 5000) - 배치 차원 추가
+        # 3. 텐서 변환 (1, 3, cnt) - 배치 차원 추가
         tensor = torch.from_numpy(points.astype(np.float32)).transpose(0, 1)
         return tensor.unsqueeze(0).to(self.device)
 
@@ -255,8 +257,10 @@ class FaceRecognizer:
 if __name__ == "__main__":
     # 1. 설정
     print = get_logger(name='matching').info
-    MODEL_PATH = "./checkpoints/pointface_epoch_200.pth" # 학습된 모델 경로
-    GALLERY_DIR = "./dataset_matching/umbdb_unpreprocessed" # 등록할 얼굴들이 있는 폴더
+    MODEL_PATH = os.path.join(CONFIG["PATH"]["checkpoint_dir"], "pointface_epoch_200.pth")  # 학습된 모델 경로
+    DATABASE_DIR = CONFIG["PATH"]["gallery_storage"] # 저장된 데이터들
+    MATCHING_DIR = CONFIG["PATH"]["gallery_dir"] # 인식할 얼굴들이 있는 폴더
+    THRESHOLD = CONFIG["MATCHING"]["threshold"]
 
     # 2. 인식기 초기화
     recognizer = FaceRecognizer(MODEL_PATH, device='cpu')
@@ -264,23 +268,23 @@ if __name__ == "__main__":
     # 3. 갤러리 등록
     #recognizer.register_gallery(GALLERY_DIR)
     # 저장된 데이터가 있으면 로드
-    recognizer.load_gallery_individual("./gallery_storage/umbdb")
+    recognizer.load_gallery_individual(DATABASE_DIR)
 
     # 4. 인식 수행    
-    identities = sorted([d for d in os.listdir(GALLERY_DIR) if os.path.isdir(os.path.join(GALLERY_DIR, d)) and not d.startswith('.')])
+    identities = sorted([d for d in os.listdir(MATCHING_DIR) if os.path.isdir(os.path.join(MATCHING_DIR, d)) and not d.startswith('.')])
     correct = 0; wrong = 0; total = 0; FAR = 0; FRR = 0
     for id in identities:
-        person_dir = os.path.join(GALLERY_DIR, id)
+        person_dir = os.path.join(MATCHING_DIR, id)
         for f in os.listdir(person_dir):
             total += 1
             identity_file = os.path.join(person_dir, f)
             print(f"[Matching] Identity: {id}")
 
             # 1:N Matching
-            #identity, score = recognizer.recognize(identity_file, threshold=0.7)
+            #identity, score = recognizer.recognize(identity_file, threshold=THRESHOLD)
 
             # 1:1 Matching
-            identity, score =recognizer.recognize_id(identity_file, id, threshold=0.7)
+            identity, score =recognizer.recognize_id(identity_file, id, threshold=THRESHOLD)
 
             print(f"[Result] Identity: {identity} (Score: {score:.4f})")
 

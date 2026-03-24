@@ -5,15 +5,16 @@ except ImportError:
 
 import torch.nn as nn
 import torch.nn.functional as F
+from config import CONFIG
 
 
 class PointFaceNet(nn.Module):
     def __init__(self, num_classes):
         super(PointFaceNet, self).__init__()
-        self.encoder = PointFaceEncoder(input_channel=3)
+        self.encoder = PointFaceEncoder()
         
         # 학습 시 Identity Classification을 위한 Softmax Layer
-        self.classifier = nn.Linear(512, num_classes)
+        self.classifier = nn.Linear(CONFIG["MODEL"]["feature_dim"], num_classes)
 
     def forward(self, x):
         # 1. 인코더를 통해 임베딩 추출

@@ -4,24 +4,26 @@ except ImportError:
     from .modules.setabstraction import SetAbstraction
 import torch.nn as nn
 import torch
+from config import CONFIG
 
 class PointFaceEncoder(nn.Module):
-    def __init__(self, input_channel=3): # 보통 좌표(3) 또는 좌표+법선(6)
+    def __init__(self): # 보통 좌표(3) 또는 좌표+법선(6)
         super(PointFaceEncoder, self).__init__()
         
         # features with dimension of 64, 128, 256, 512, 1024 
         # (npoint, radius, nsample, in_channel, out_channel, hidden_mlp)
         # radius는 PointNet++처럼 점진적 증가
+        sa_params = CONFIG['SA_PARAMS']
         
-        self.sa1 = SetAbstraction(2048, 0.10, 32, input_channel, 64, 16)
-        self.sa2 = SetAbstraction(1024, 0.20, 32, 64, 128, 32)
-        self.sa3 = SetAbstraction(512, 0.40, 32, 128, 256, 64)
-        self.sa4 = SetAbstraction(256, 0.60, 32, 256, 512, 128)
+        self.sa1 = SetAbstraction(sa_params[0]['npoint'], sa_params[0]['radius'], sa_params[0]['nsample'], sa_params[0]['in_ch'], sa_params[0]['out_ch'], sa_params[0]['hid_ch'])
+        self.sa2 = SetAbstraction(sa_params[1]['npoint'], sa_params[1]['radius'], sa_params[1]['nsample'], sa_params[1]['in_ch'], sa_params[1]['out_ch'], sa_params[1]['hid_ch'])
+        self.sa3 = SetAbstraction(sa_params[2]['npoint'], sa_params[2]['radius'], sa_params[2]['nsample'], sa_params[2]['in_ch'], sa_params[2]['out_ch'], sa_params[2]['hid_ch'])
+        self.sa4 = SetAbstraction(sa_params[3]['npoint'], sa_params[3]['radius'], sa_params[3]['nsample'], sa_params[3]['in_ch'], sa_params[3]['out_ch'], sa_params[3]['hid_ch'])
         
         # Final Fully Connected Layer 
         self.fc = nn.Sequential(
-            nn.Linear(512, 512),
-            nn.BatchNorm1d(512),
+            nn.Linear(sa_params[-1]['out_ch'], CONFIG["MODEL"]["feature_dim"]),
+            nn.BatchNorm1d(CONFIG["MODEL"]["feature_dim"]),
         )
 
     def forward(self, x):

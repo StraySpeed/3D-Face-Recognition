@@ -2,7 +2,7 @@ from torch.utils.data import Dataset, DataLoader
 import os
 import numpy as np
 from .pointcloud_augmentation import PointCloudAugmentation
-
+from config import CONFIG
 class PointFaceDataset(Dataset):
     def __init__(self, data_root, train=True):
         """
@@ -12,7 +12,7 @@ class PointFaceDataset(Dataset):
         """
         self.data_root = data_root
         self.train = train
-        self.transform = PointCloudAugmentation(num_points=5000)
+        self.transform = PointCloudAugmentation(num_points=CONFIG["MODEL"]["num_points"])
         self.pairs = [] # (path_anchor, path_positive, label_idx)
         
         # 1. 데이터 로드 및 정리

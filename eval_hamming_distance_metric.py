@@ -4,14 +4,15 @@ import os
 import matplotlib.pyplot as plt
 from model.pointface import PointFaceNet
 from biohashing.biohasher import BioHasher
+from config import CONFIG
 
 class HamdisEvaluator:
-    def __init__(self, model_path, device='cpu'):
+    def __init__(self, model_path, device=CONFIG["DEVICE"]):
         self.device = torch.device(device)
         
         # 모델 & Hasher 로드
-        self.model = PointFaceNet(num_classes=143).to(self.device)
-        self.hasher = BioHasher(input_dim=512, code_length=512)
+        self.model = PointFaceNet(num_classes=CONFIG["MODEL"]["num_classes"]).to(self.device)
+        self.hasher = BioHasher(input_dim=CONFIG["MODEL"]["feature_dim"], code_length=CONFIG["MODEL"]["feature_dim"])
         
         checkpoint = torch.load(model_path, map_location=self.device)
         state_dict = checkpoint['model_state_dict'] if 'model_state_dict' in checkpoint else checkpoint
@@ -22,11 +23,12 @@ class HamdisEvaluator:
 
     def preprocess(self, points):
         """ 전처리: Sampling -> Normalize -> Tensor """
-        if len(points) > 5000:
-            choice = np.random.choice(len(points), 5000, replace=False)
+        cnt = CONFIG["MODEL"]["num_points"]
+        if len(points) > cnt:
+            choice = np.random.choice(len(points), cnt, replace=False)
             points = points[choice, :]
-        elif len(points) < 5000:
-            choice = np.random.choice(len(points), 5000, replace=True)
+        elif len(points) < cnt:
+            choice = np.random.choice(len(points), cnt, replace=True)
             points = points[choice, :]
             
         points = points - np.mean(points, axis=0)
@@ -155,17 +157,17 @@ class HamdisEvaluator:
         plt.savefig('Hamming_distance_result.png')
 
 if __name__ == "__main__":
-    MODEL_PATH = "./checkpoints/pointface_epoch_200.pth"
-    GALLERY_STORAGE = "./gallery_storage/umbdb_biocode"
-    TEST_DATA_ROOT = "./dataset_matching/umbdb_unpreprocessed"
+    MODEL_PATH = os.path.join(CONFIG["PATH"]["checkpoint_dir"], "pointface_epoch_200.pth")  # 학습된 모델 경로
+    DATABASE_DIR = CONFIG["PATH"]["gallery_storage_bio"] # 저장된 데이터들
+    MATCHING_DIR = CONFIG["PATH"]["gallery_dir"] # 인식할 얼굴들이 있는 폴더
     
-    evaluator = HamdisEvaluator(MODEL_PATH, device='cpu')
+    evaluator = HamdisEvaluator(MODEL_PATH, device=CONFIG["DEVICE"])
     
     # 1. 갤러리 로드
-    evaluator.load_gallery(GALLERY_STORAGE)
+    evaluator.load_gallery(DATABASE_DIR)
     
     # 2. 모든 조합에 대해 점수 계산
-    gen_scores, imp_scores = evaluator.calculate_scores(TEST_DATA_ROOT)
+    gen_scores, imp_scores = evaluator.calculate_scores(MATCHING_DIR)
     
     # 3. 성능 측정 및 그래프
     evaluator.evaluate_metrics(gen_scores, imp_scores)

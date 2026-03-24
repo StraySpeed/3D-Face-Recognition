@@ -7,23 +7,24 @@ from model.modules.featuresimloss import FeatureSimilarityLoss
 from model.loader import get_dataloader
 import time, datetime
 from logger import get_logger
+from config import CONFIG
 
 # 1. 모델 및 손실 함수 설정
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 #device = torch.device('mps' if torch.cuda.is_available() else 'cpu')
 
 # num_classes: 데이터셋의 총 ID 개수
-model = PointFaceNet(num_classes=143).to(device)
+model = PointFaceNet(num_classes=CONFIG["MODEL"]["num_classes"]).to(device)
 
 # 람다(lambda) 값 (두 loss 간의 비율)
-lambda_factor = 1.0 
+lambda_factor = CONFIG["TRAIN"]["lambda_factor"]
 
 # 손실 함수 정의
 criterion_softmax = nn.CrossEntropyLoss()
-criterion_similarity = FeatureSimilarityLoss(margin=0.35).to(device)
+criterion_similarity = FeatureSimilarityLoss(margin=CONFIG["TRAIN"]["margin"]).to(device)
 
 # 옵티마이저 (Adam, lr=0.001)
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.Adam(model.parameters(), lr=CONFIG["TRAIN"]["learning_rate"])
 
 # 2. 학습 루프 (Training Loop)
 def train_one_epoch(dataloader, model, optimizer, epoch):
@@ -118,16 +119,41 @@ def save_checkpoint(model, optimizer, epoch, save_dir="./checkpoints"):
     torch.save(checkpoint, save_path)
     print(f"Model saved to {save_path}")
 
+def resume_from_checkpoint(checkpoint_path):
+    if os.path.exists(checkpoint_path):
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        
+        # 1. 모델 가중치 복구
+        model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # 2. 옵티마이저 상태 복구 (Adam의 모멘텀 등 내부 상태 유지)
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        # 3. 시작 에포크 업데이트 (저장된 에포크 다음부터 시작)
+        start_epoch = checkpoint['epoch']
+        print(f"Start at {start_epoch} epoch.")
+        return start_epoch
+    return 0
+
 
 if __name__ == '__main__':
     # 로거 생성
-    logger = get_logger(name='train')
+    logger = get_logger(name='train_v1')
     print = logger.info
 
-    root_folder = 'dataset/umbdb'
-    train_loader = get_dataloader(root_folder, batch_size=32, num_workers=0)
-    max_epoch = 200
-    for epoch in range(max_epoch):
+    root_folder = CONFIG["PATH"]["data_root"]
+    batch_size = CONFIG["TRAIN"]["batch_size"]
+    num_workers = CONFIG["TRAIN"]["num_workers"]
+    savepath = CONFIG["PATH"]["checkpoint_dir"]
+    train_loader = get_dataloader(root_folder, batch_size=batch_size, num_workers=num_workers)
+
+    max_epoch = CONFIG["TRAIN"]["epochs"]
+    start_epoch = 0
+    # 이어서 학습할 파일 경로 지정
+    #CHECKPOINT_PATH = "./checkpoints_enc2/pointface_epoch_070.pth" 
+    #start_epoch = resume_from_checkpoint(CHECKPOINT_PATH)
+    
+    for epoch in range(start_epoch, max_epoch):
 
         start_time = time.time()
         train_one_epoch(train_loader, model, optimizer, epoch)
