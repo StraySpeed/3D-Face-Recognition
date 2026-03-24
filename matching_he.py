@@ -4,9 +4,10 @@ import tenseal as ts
 import os, glob, time
 from model.pointface import PointFaceNet 
 from logger import get_logger
+from config import CONFIG
 
 class HEFaceRecognizer:
-    def __init__(self, model_path, num_classes=143, device='cpu'):
+    def __init__(self, model_path, num_classes=CONFIG["MODEL"]['num_classes'], device='cpu'):
         self.device = torch.device(device)
         
         # 1. 모델 초기화 및 가중치 로드
@@ -43,11 +44,12 @@ class HEFaceRecognizer:
         :param points: (N, 3) numpy array
         """
         # 1. 리샘플링 (5000개)
-        if len(points) > 5000:
-            choice = np.random.choice(len(points), 5000, replace=False)
+        cnt = CONFIG["MODEL"]['num_points']
+        if len(points) > cnt:
+            choice = np.random.choice(len(points), cnt, replace=False)
             points = points[choice, :]
-        elif len(points) < 5000:
-            choice = np.random.choice(len(points), 5000, replace=True)
+        elif len(points) < cnt:
+            choice = np.random.choice(len(points), cnt, replace=True)
             points = points[choice, :]
             
         # 2. 정규화 (Center & Scale)
@@ -329,8 +331,10 @@ class HEFaceRecognizer:
 if __name__ == "__main__":
     # 1. 설정
     print = get_logger(name='matching_he').info
-    MODEL_PATH = "./checkpoints/pointface_epoch_200.pth" # 학습된 모델 경로
-    GALLERY_DIR = "./dataset_matching/umbdb_unpreprocessed" # 등록할 얼굴들이 있는 폴더
+    MODEL_PATH = os.path.join(CONFIG["PATH"]["checkpoint_dir"], "pointface_epoch_200.pth")  # 학습된 모델 경로
+    DATABASE_DIR = CONFIG["PATH"]["gallery_storage_enc"] # 저장된 데이터들
+    MATCHING_DIR = CONFIG["PATH"]["gallery_dir"] # 인식할 얼굴들이 있는 폴더
+    THRESHOLD = CONFIG["MATCHING"]["threshold"] # 인식할 얼굴들이 있는 폴더
 
     # 2. 인식기 초기화
     secure_recognizer = HEFaceRecognizer(MODEL_PATH, device='cpu')
@@ -339,23 +343,23 @@ if __name__ == "__main__":
     # secure_recognizer.register_gallery_encrypted(GALLERY_DIR)
     # secure_recognizer.save_gallery_individual("./gallery_storage/umbdb_enc2")
     # 저장된 데이터가 있으면 로드
-    secure_recognizer.load_gallery_individual("./gallery_storage/umbdb_enc")
+    secure_recognizer.load_gallery_individual(DATABASE_DIR)
     
     # 4. 인식 수행
-    identities = sorted([d for d in os.listdir(GALLERY_DIR) if os.path.isdir(os.path.join(GALLERY_DIR, d)) and not d.startswith('.')])
+    identities = sorted([d for d in os.listdir(MATCHING_DIR) if os.path.isdir(os.path.join(MATCHING_DIR, d)) and not d.startswith('.')])
     correct = 0; wrong = 0; total = 0
     for id in identities:
-        person_dir = os.path.join(GALLERY_DIR, id)
+        person_dir = os.path.join(MATCHING_DIR, id)
         for f in os.listdir(person_dir):
             total += 1
             identity_file = os.path.join(person_dir, f)
             print(f"[Matching] Identity: {id}")
 
             # 1:N Matching
-            #identity, score = secure_recognizer.recognize_encrypted(identity_file, threshold=0.7)
+            #identity, score = secure_recognizer.recognize_encrypted(identity_file, threshold=THRESHOLD)
             
             # 1:1 Matching
-            identity, score = secure_recognizer.recognize_encrypted_id(identity_file, id, threshold=0.7)
+            identity, score = secure_recognizer.recognize_encrypted_id(identity_file, id, threshold=THRESHOLD)
             print(f"[Result] Identity: {identity} (Score: {score:.4f})")
 
             if id == identity:

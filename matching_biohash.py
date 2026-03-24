@@ -4,15 +4,16 @@ import os, glob, time
 from model.pointface import PointFaceNet
 from biohashing.biohasher import BioHasher
 from logger import get_logger
+from config import CONFIG
 
 class BioHashFaceRecognizer:
-    def __init__(self, model_path, num_classes=143, device='cpu'):
+    def __init__(self, model_path, num_classes=CONFIG["MODEL"]['num_classes'], device='cpu'):
         self.device = torch.device(device)
         
         # 1. 모델 초기화 및 가중치 로드
         # Inference 시에는 num_classes가 중요하지 않지만 구조를 맞추기 위해 넣음
         self.model = PointFaceNet(num_classes=num_classes).to(self.device)
-        self.hasher = BioHasher(input_dim=512, code_length=512)
+        self.hasher = BioHasher(input_dim=CONFIG["MODEL"]["feature_dim"], code_length=CONFIG["MODEL"]["feature_dim"])
         
         # 가중치 파일 로드
         checkpoint = torch.load(model_path, map_location=self.device)
@@ -33,12 +34,13 @@ class BioHashFaceRecognizer:
         
         :param points: (N, 3) numpy array
         """
-        # 1. 리샘플링 (5000개)
-        if len(points) > 5000:
-            choice = np.random.choice(len(points), 5000, replace=False)
+        # 1. 리샘플링 (cnt 개)
+        cnt = CONFIG["MODEL"]['num_points']
+        if len(points) > cnt:
+            choice = np.random.choice(len(points), cnt, replace=False)
             points = points[choice, :]
-        elif len(points) < 5000:
-            choice = np.random.choice(len(points), 5000, replace=True)
+        elif len(points) < cnt:
+            choice = np.random.choice(len(points), cnt, replace=True)
             points = points[choice, :]
             
         # 2. 정규화 (Center & Scale)
@@ -275,8 +277,9 @@ class BioHashFaceRecognizer:
 if __name__ == "__main__":
     # 1. 설정
     print = get_logger(name='matching_biocode').info
-    MODEL_PATH = "./checkpoints/pointface_epoch_200.pth" # 학습된 모델 경로
-    GALLERY_DIR = "./dataset_matching/umbdb_unpreprocessed" # 등록할 얼굴들이 있는 폴더
+    MODEL_PATH = os.path.join(CONFIG["PATH"]["checkpoint_dir"], "pointface_epoch_200.pth")  # 학습된 모델 경로
+    DATABASE_DIR = CONFIG["PATH"]["gallery_storage_bio"] # 저장된 데이터들
+    MATCHING_DIR = CONFIG["PATH"]["gallery_dir"] # 인식할 얼굴들이 있는 폴더
 
     # 2. 인식기 초기화
     recognizer = BioHashFaceRecognizer(MODEL_PATH, device='cpu')
@@ -284,13 +287,13 @@ if __name__ == "__main__":
     # 3. 갤러리 등록
     #recognizer.register_gallery(GALLERY_DIR)
     # 저장된 데이터가 있으면 로드
-    recognizer.load_gallery_individual("./gallery_storage/umbdb_biocode")
+    recognizer.load_gallery_individual(DATABASE_DIR)
 
     # 4. 인식 수행    
-    identities = sorted([d for d in os.listdir(GALLERY_DIR) if os.path.isdir(os.path.join(GALLERY_DIR, d)) and not d.startswith('.')])
+    identities = sorted([d for d in os.listdir(MATCHING_DIR) if os.path.isdir(os.path.join(MATCHING_DIR, d)) and not d.startswith('.')])
     correct = 0; wrong = 0; total = 0
     for id in identities:
-        person_dir = os.path.join(GALLERY_DIR, id)
+        person_dir = os.path.join(MATCHING_DIR, id)
         for f in os.listdir(person_dir):
             total += 1
             identity_file = os.path.join(person_dir, f)
