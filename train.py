@@ -155,6 +155,7 @@ if __name__ == '__main__':
     root_folder = CONFIG["PATH"]["data_root"]
     batch_size = CONFIG["TRAIN"]["batch_size"]
     num_workers = CONFIG["TRAIN"]["num_workers"]
+    savepath = CONFIG["PATH"]["checkpoint_dir"]
     train_loader = get_dataloader(root_folder, batch_size=batch_size, num_workers=num_workers)
 
     max_epoch = CONFIG["TRAIN"]["epochs"]
@@ -173,4 +174,4 @@ if __name__ == '__main__':
 
         print(f"Epoch [{epoch}/{max_epoch}] Time: {time_str} ({epoch_duration:.2f}s)")
         if (epoch + 1) % 10 == 0:
-            save_checkpoint(model, optimizer, epoch + 1)
+            save_checkpoint(model, optimizer, epoch + 1, savepath)

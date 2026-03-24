@@ -18,7 +18,7 @@ class PointFaceDataset(Dataset):
         """
         self.data_root = data_root
         self.train = train
-        self.transform = PointCloudAugmentation(num_points=5000)
+        self.transform = PointCloudAugmentation(num_points=CONFIG["MODEL"]["num_points"])
         self.pairs = [] # (path_anchor, path_positive, label_idx)
         
         # 1. 데이터 로드 및 정리
@@ -87,7 +87,7 @@ class PointFaceDataset(Dataset):
         # 다시 원래의 (3, 5000) 형태로 복구
         return sorted_xyz.transpose(0, 1)
 
-    def _deterministic_sample_and_normalize(self, points, num_points=5000):
+    def _deterministic_sample_and_normalize(self, points, num_points=CONFIG["MODEL"]["num_points"]):
         """추론(Test) 시 점의 개수를 고정하고 크기를 정규화하는 함수"""
         total_points = len(points)
         if total_points > num_points:
@@ -123,8 +123,8 @@ class PointFaceDataset(Dataset):
             anchor_points = self.transform(anchor_points)
             pos_points = self.transform(pos_points)
         else:
-            anchor_points = self._deterministic_sample_and_normalize(anchor_points, 5000)
-            pos_points = self._deterministic_sample_and_normalize(pos_points, 5000)
+            anchor_points = self._deterministic_sample_and_normalize(anchor_points, CONFIG["MODEL"]["num_points"])
+            pos_points = self._deterministic_sample_and_normalize(pos_points, CONFIG["MODEL"]["num_points"])
         # 3. 사전 연산 데이터(pre_data) 생성
         anchor_pre_data = self._generate_pre_data(anchor_points)
         pos_pre_data = self._generate_pre_data(pos_points)

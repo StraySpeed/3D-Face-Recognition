@@ -156,4 +156,4 @@ if __name__ == "__main__":
     
     # 5. 검증 및 시각화
     pos_scores, neg_scores, best_th = evaluate_verification(embeddings, labels)
-    plot_distributions(pos_scores, neg_scores, best_th, 'unseen_test_result_200')
+    plot_distributions(pos_scores, neg_scores, best_th, os.path.join(MODEL_PATH, 'unseen_test_result'))

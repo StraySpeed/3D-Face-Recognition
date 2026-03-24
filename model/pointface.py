@@ -17,7 +17,7 @@ class PointFaceNet(nn.Module):
         self.encoder = PointFaceEncoder()
         
         # 학습 시 Identity Classification을 위한 Softmax Layer
-        self.classifier = nn.Linear(512, num_classes)
+        self.classifier = nn.Linear(CONFIG["MODEL"]["feature_dim"], num_classes)
 
     def forward(self, pre_data=None):
         # 1. 인코더를 통해 임베딩 추출
@@ -36,7 +36,9 @@ class PointFaceNet(nn.Module):
     @staticmethod
     def preprocess(points, num_points=CONFIG["MODEL"]["num_points"], device='cpu'):
         """
-        점들을 전처리하는 함수
+        ## 점들을 전처리하는 함수
+
+        :return pre_data: >>> dict('rel': dict('s1': [], 's2': [], 's3': [], 's4': []), 'idx': dict('s1': [], 's2': [], 's3': [], 's4': []))
         """
         total_points = len(points)
         if total_points > num_points:

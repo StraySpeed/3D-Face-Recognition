@@ -1,8 +1,9 @@
 import numpy as np
 import torch
+from config import CONFIG
 
 class PointCloudAugmentation:
-    def __init__(self, num_points=5000, train=True):
+    def __init__(self, num_points=CONFIG["MODEL"]["num_points"], train=True):
         self.num_points = num_points
         self.train = train
 

@@ -243,10 +243,10 @@ if __name__ == "__main__":
     recognizer = FaceRecognizer(MODEL_PATH, 'cpu')
     
     # 3. 갤러리 등록
-    #recognizer.register_gallery(MATCHING_DIR)
-    #recognizer.save_gallery_individual(DATABASE_DIR)
+    recognizer.register_gallery(MATCHING_DIR)
+    recognizer.save_gallery_individual(DATABASE_DIR)
     # 저장된 데이터가 있으면 로드
-    recognizer.load_gallery_individual(DATABASE_DIR)
+    #recognizer.load_gallery_individual(DATABASE_DIR)
 
     # 4. 인식 수행    
     identities = sorted([d for d in os.listdir(MATCHING_DIR) if os.path.isdir(os.path.join(MATCHING_DIR, d)) and not d.startswith('.')])

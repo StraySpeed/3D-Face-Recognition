@@ -21,8 +21,8 @@ class PointFaceEncoder(nn.Module):
         
         # Final Fully Connected Layer 
         self.fc = nn.Sequential(
-            nn.Linear(512, 512),
-            nn.BatchNorm1d(512),
+            nn.Linear(sa_params[-1]['out_ch'], CONFIG["MODEL"]["feature_dim"]),
+            nn.BatchNorm1d(CONFIG["MODEL"]["feature_dim"]),
         )
 
     def forward(self, pre_data):
@@ -38,9 +38,9 @@ class PointFaceEncoder(nn.Module):
         l4_features = self.sa4(l3_features, precomputed_rel_vec['s4'], precomputed_indices['s4'])
         
         # Global Sum Pooling
-        global_feature = torch.sum(l4_features, 2) # (B, 512)
+        global_feature = torch.sum(l4_features, 2)
         
-        # Embedding 생성 (B, 512)
+        # Embedding 생성 (B, feature_dim)
         embedding = self.fc(global_feature)
         
         return embedding
