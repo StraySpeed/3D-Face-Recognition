@@ -21,8 +21,8 @@ class PointFaceEncoder(nn.Module):
         
         # Final Fully Connected Layer 
         self.fc = nn.Sequential(
-            nn.Linear(512, 512),
-            nn.BatchNorm1d(512),
+            nn.Linear(sa_params[-1]["out_ch"], CONFIG["MODEL"]["feature_dim"]),
+            nn.BatchNorm1d(CONFIG["MODEL"]["feature_dim"]),
         )
 
     def forward(self, x, pre_data=None):
@@ -36,45 +36,54 @@ class PointFaceEncoder(nn.Module):
         precomputed_indices = pre_data['indices']
         
         # 입력 데이터를 4등분 후 1단계 처리
-        xyz_batch1 = xyz.view(B, 3, 4, 1250).transpose(1, 2).reshape(-1, 3, 1250)
+        num_points = CONFIG["MODEL"]["num_points"] // 4
+        xyz_batch1 = xyz.view(B, 3, 4, num_points).transpose(1, 2).reshape(-1, 3, num_points)
         if features is not None:
-            feat_batch1 = features.view(B, features.shape[1], 4, 1250).transpose(1, 2).reshape(-1, features.shape[1], 1250)
+            feat_batch1 = features.view(B, features.shape[1], 4, num_points).transpose(1, 2).reshape(-1, features.shape[1], num_points)
         else:
             feat_batch1 = None
 
-        c1 = precomputed_centroids['s1'].view(-1, 3, 512) if precomputed_centroids else None
-        i1 = precomputed_indices['s1'].view(-1, 512, 32)  if precomputed_indices else None
+        s1_points = CONFIG["SA_PARAMS"][0]["npoint"]
+        s1_sample = CONFIG["SA_PARAMS"][0]["nsample"]
+        c1 = precomputed_centroids['s1'].view(-1, 3, s1_points) if precomputed_centroids else None
+        i1 = precomputed_indices['s1'].view(-1, s1_points, s1_sample)  if precomputed_indices else None
         l1_xyz, l1_points = self.sa1(xyz_batch1, feat_batch1, c1, i1)
 
         # 4 -> 2개씩 붙여서 2단계 처리
-        l1_x_unflat = l1_xyz.view(B, 4, 3, 512)
+        l1_x_unflat = l1_xyz.view(B, 4, 3, s1_points)
         xyz_12 = torch.cat([l1_x_unflat[:, 0], l1_x_unflat[:, 1]], dim=2) # (B, 3, 1024)
         xyz_34 = torch.cat([l1_x_unflat[:, 2], l1_x_unflat[:, 3]], dim=2)
-        xyz_batch2 = torch.stack([xyz_12, xyz_34], dim=1).view(-1, 3, 1024) # (2B, 3, 1024)
+        xyz_batch2 = torch.stack([xyz_12, xyz_34], dim=1).view(-1, 3, s1_points * 2) # (2B, 3, 1024)
         
-        l1_f_unflat = l1_points.view(B, 4, l1_points.shape[1], 512)
+        l1_f_unflat = l1_points.view(B, 4, l1_points.shape[1], s1_points)
         feat_12 = torch.cat([l1_f_unflat[:, 0], l1_f_unflat[:, 1]], dim=2)
         feat_34 = torch.cat([l1_f_unflat[:, 2], l1_f_unflat[:, 3]], dim=2)
-        feat_batch2 = torch.stack([feat_12, feat_34], dim=1).view(-1, l1_points.shape[1], 1024)
+        feat_batch2 = torch.stack([feat_12, feat_34], dim=1).view(-1, l1_points.shape[1], s1_points * 2)
         
-        c2 = precomputed_centroids['s2'].view(-1, 3, 512) if precomputed_centroids else None
-        i2 = precomputed_indices['s2'].view(-1, 512, 32)  if precomputed_indices else None
+        s2_points = CONFIG["SA_PARAMS"][1]["npoint"]
+        s2_sample = CONFIG["SA_PARAMS"][1]["nsample"]
+        c2 = precomputed_centroids['s2'].view(-1, 3, s2_points) if precomputed_centroids else None
+        i2 = precomputed_indices['s2'].view(-1, s2_points, s2_sample)  if precomputed_indices else None
         l2_xyz, l2_points = self.sa2(xyz_batch2, feat_batch2, c2, i2)
         
         # 2 -> 1로 최종 처리
-        l2_x_unflat = l2_xyz.view(B, 2, 3, 512)
+        l2_x_unflat = l2_xyz.view(B, 2, 3, s2_points)
         l2_xyz_all = torch.cat([l2_x_unflat[:, 0], l2_x_unflat[:, 1]], dim=2)
         
-        l2_f_unflat = l2_points.view(B, 2, l2_points.shape[1], 512)
+        l2_f_unflat = l2_points.view(B, 2, l2_points.shape[1], s2_points)
         l2_points_all = torch.cat([l2_f_unflat[:, 0], l2_f_unflat[:, 1]], dim=2)
         
-        c3 = precomputed_centroids['s3'].view(-1, 3, 512) if precomputed_centroids else None
-        i3 = precomputed_indices['s3'].view(-1, 512, 32)  if precomputed_indices else None
+        s3_points = CONFIG["SA_PARAMS"][2]["npoint"]
+        s3_sample = CONFIG["SA_PARAMS"][2]["nsample"]
+        c3 = precomputed_centroids['s3'].view(-1, 3, s3_points) if precomputed_centroids else None
+        i3 = precomputed_indices['s3'].view(-1, s3_points, s3_sample)  if precomputed_indices else None
         l3_xyz, l3_points = self.sa3(l2_xyz_all, l2_points_all, c3, i3)
 
+        s4_points = CONFIG["SA_PARAMS"][3]["npoint"]
+        s4_sample = CONFIG["SA_PARAMS"][3]["nsample"]
         # 이게 필요한가?는 고민해볼 것
-        c4 = precomputed_centroids['s4'].view(-1, 3, 256) if precomputed_centroids else None
-        i4 = precomputed_indices['s4'].view(-1, 256, 32)  if precomputed_indices else None
+        c4 = precomputed_centroids['s4'].view(-1, 3, s4_points) if precomputed_centroids else None
+        i4 = precomputed_indices['s4'].view(-1, s4_points, s4_sample)  if precomputed_indices else None
         l4_xyz, l4_points = self.sa4(l3_xyz, l3_points, c4, i4)
         
         # Global Max Pooling: (B, 512, 256) -> (B, 512)
