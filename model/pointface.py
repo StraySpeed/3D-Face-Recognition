@@ -115,3 +115,28 @@ class PointFaceNet(nn.Module):
             curr_xyz = centroids
             
         return pre_data
+    
+    @staticmethod
+    def morton_sort(points):
+        """ 3D 공간의 점들을 Z-Order 커브를 따라 1D 배열로 정렬 """
+        coords = points[:, :3]
+        p_min = np.min(coords, axis=0)
+        p_max = np.max(coords, axis=0)
+        # 0~1로 정규화 후 10bit(0~1023) 양자화
+        norm_points = (coords - p_min) / (p_max - p_min + 1e-8)
+        quantized = np.clip(np.floor(norm_points * 1024), 0, 1023).astype(np.uint32)
+        
+        def part1by2(n):
+            n &= 0x000003ff
+            n = (n ^ (n << 16)) & 0xff0000ff
+            n = (n ^ (n <<  8)) & 0x0300f00f
+            n = (n ^ (n <<  4)) & 0x030c30c3
+            n = (n ^ (n <<  2)) & 0x09249249
+            return n
+        
+        x = np.vectorize(part1by2)(quantized[:, 0])
+        y = np.vectorize(part1by2)(quantized[:, 1])
+        z = np.vectorize(part1by2)(quantized[:, 2])
+        
+        codes = (z << 2) | (y << 1) | x
+        return points[np.argsort(codes)]

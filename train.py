@@ -149,7 +149,7 @@ def resume_from_checkpoint(checkpoint_path):
 
 if __name__ == '__main__':
     # 로거 생성
-    logger = get_logger(name='train_v3')
+    logger = get_logger(name='train_v4')
     print = logger.info
 
     root_folder = CONFIG["PATH"]["data_root"]

@@ -1,4 +1,4 @@
-import os, torch, sys
+import os, torch, sys, pickle
 import tenseal as ts
 import numpy as np
 sys.path.insert(1, os.path.dirname(os.path.dirname(__file__)))
@@ -87,13 +87,21 @@ if __name__ =="__main__":
             print(f"Warning: No valid files found for {identity}")
             continue
 
-        np.save(os.path.join(SAVE_DIR,"umbdb", f"{identity}.npy"), mean_embedding.astype(np.float32))
-        #enc_vec = ts.ckks_vector(ctx, mean_embedding)  #(512, )
-
-        # 개별 파일로 저장
-        #vec_path = os.path.join(SAVE_DIR, "umbdb", f"{identity}.ts")
-        #with open(vec_path, "wb") as f:
-        #    f.write(enc_vec.serialize())
+        # 1개로 저장 (plainText)
+        # np.save(os.path.join(SAVE_DIR,"umbdb", f"{identity}.npy"), mean_embedding.astype(np.float32))
+        
+        # 128개로 저장
+        enc_gallery_list = []
+        for val in mean_embedding:
+            # 단일 스칼라 값을 리스트 형태로 감싸서 암호화
+            enc_vec = ts.ckks_vector(ctx, [val.item()])
+            enc_gallery_list.append(enc_vec.serialize())
+        
+        # pickle을 이용하여 128개의 직렬화된 암호문 바이트 리스트를 한 번에 저장
+        save_path = os.path.join(SAVE_DIR, "umbdb", f"{identity}.pkl")
+        with open(save_path, "wb") as f:
+            pickle.dump(enc_gallery_list, f)
             
         count += 1
+        exit(0)
     print(f"Total: {count} IDs(Encrypted).")

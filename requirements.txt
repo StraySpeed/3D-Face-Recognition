@@ -1,6 +1,9 @@
 numpy
 torch
-tenseal
+# tenseal이 여러 제약이 있음 (rotate 불가 등)
+# 다른 라이브러리로 대체
+# tenseal
+openfhe
 
 # 데이터 시각화용
 matplotlib

@@ -17,13 +17,21 @@ class PointCloudAugmentation:
         
         # 2. Normalization (Unit Sphere) 
         points = self.normalize(points)
-        
+
         if train and self.train:
-            # 3. Data Augmentation
+            # 3. Data Augmentation (각 기법을 독립적인 확률로 적용)
             if np.random.random() > 0.5:
                 points = self.random_scale(points)
+            if np.random.random() > 0.5:
                 points = self.random_rotate(points)
+            if np.random.random() > 0.5:
                 points = self.random_translate(points)
+            if np.random.random() > 0.5:
+                points = self.random_jitter(points)      # [신규] 가우시안 노이즈
+            if np.random.random() > 0.5:
+                points = self.random_dropout(points)
+
+        points = self.morton_sort(points)
                 
         # (N, 3) -> (3, N) for PyTorch Conv1d
         return torch.from_numpy(points.astype(np.float32)).transpose(1, 0)
@@ -52,9 +60,9 @@ class PointCloudAugmentation:
         return points + shift
 
     def random_rotate(self, points):
-        # Yaw: [-90, 90], Pitch: [-30, 30] 
-        theta_y = np.random.uniform(-90, 90) * np.pi / 180
-        theta_p = np.random.uniform(-30, 30) * np.pi / 180
+        # Yaw: [-45, 45], Pitch: [-15, 15] 
+        theta_y = np.random.uniform(-45, 45) * np.pi / 180
+        theta_p = np.random.uniform(-15, 15) * np.pi / 180
         
         # Rotation Matrix (Yaw)
         rot_y = np.array([
@@ -72,3 +80,47 @@ class PointCloudAugmentation:
         
         rotation_matrix = np.dot(rot_y, rot_p)
         return np.dot(points, rotation_matrix)
+    
+    def random_jitter(self, points, std=0.02, clip=0.05):
+        """ nsample=4 환경에서도 부피를 인식하도록 강한 노이즈 삽입 """
+        noise = np.clip(np.random.normal(0, std, points.shape), -clip, clip)
+        return points + noise
+
+    def random_dropout(self, points, min_drop=0.1, max_drop=0.2):
+        """ 무작위로 10~20%의 점을 지워, 이웃 점이 부족한 열악한 상황을 시뮬레이션 """
+        dropout_ratio = np.random.uniform(min_drop, max_drop)
+        num_drop = int(dropout_ratio * points.shape[0])
+        
+        # 삭제되지 않고 남길 점들 선택
+        keep_indices = np.random.choice(points.shape[0], points.shape[0] - num_drop, replace=False)
+        kept_points = points[keep_indices, :]
+        
+        # 1024개를 맞추기 위해 남은 점들 중에서 랜덤 복제하여 채움
+        dup_indices = np.random.choice(kept_points.shape[0], num_drop, replace=True)
+        dup_points = kept_points[dup_indices, :]
+        
+        return np.vstack([kept_points, dup_points])
+
+    def morton_sort(self, points):
+        """ Client 전처리와 동일하게 1D 배열 인덱스를 정렬 """
+        coords = points[:, :3]
+        p_min = np.min(coords, axis=0)
+        p_max = np.max(coords, axis=0)
+        
+        norm_points = (coords - p_min) / (p_max - p_min + 1e-8)
+        quantized = np.clip(np.floor(norm_points * 1024), 0, 1023).astype(np.uint32)
+        
+        def part1by2(n):
+            n &= 0x000003ff
+            n = (n ^ (n << 16)) & 0xff0000ff
+            n = (n ^ (n <<  8)) & 0x0300f00f
+            n = (n ^ (n <<  4)) & 0x030c30c3
+            n = (n ^ (n <<  2)) & 0x09249249
+            return n
+        
+        x = np.vectorize(part1by2)(quantized[:, 0])
+        y = np.vectorize(part1by2)(quantized[:, 1])
+        z = np.vectorize(part1by2)(quantized[:, 2])
+        
+        codes = (z << 2) | (y << 1) | x
+        return points[np.argsort(codes)]

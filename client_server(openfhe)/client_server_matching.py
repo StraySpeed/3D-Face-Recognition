@@ -10,15 +10,15 @@ def main():
     logger.info("========== FHE 3D Face Matching Simulation ==========")
 
     # 1. 서버 구동을 위한 Context 준비 s
-    context_path = CONFIG["PATH"]["secret.context"]
-    if not os.path.exists(context_path):
+    key_path = CONFIG["PATH"]["key_dir"]
+    if not os.path.exists(key_path):
         logger.error("Context 파일이 없습니다.")
         return
 
     # 2. 객체 초기화 (Client & Server)
     logger.info("1. 시스템 모듈 초기화 중...")
-    client = PointFaceClient(context_path, logger.info)
-    server = PointFaceServer(context_path, logger.info)
+    client = PointFaceClient(key_path, logger.info)
+    server = PointFaceServer(key_path, logger.info)
 
     # 서버에 암호화된 갤러리(DB) 로드
     gallery_dir = CONFIG["PATH"]["gallery_storage_enc"]

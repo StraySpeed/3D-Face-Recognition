@@ -1,4 +1,4 @@
-import torch
+import torch, pickle
 import numpy as np
 import tenseal as ts
 import os, glob, time
@@ -50,8 +50,6 @@ class PointFaceServer:
         if not ts_files:
             self.print("[Server] Warning: No .ts files found in the directory.")
             return False
-            
-        self.print(f"[Server] Loading embeddings from '{load_dir}'...")
 
         self.encrypted_gallery = {}
         for file_path in ts_files:
@@ -97,6 +95,43 @@ class PointFaceServer:
         self.print(f"[Server] Loaded {len(self.plain_gallery)} plain identities.")
         return True
 
+    def load_gallery_individual_pkl(self, load_dir="gallery_storage"):
+        """
+        # Server - 폴더 내의 모든 암호화된 .pkl 파일을 읽어서 갤러리로 로드
+
+        128개의 암호문이 들어있음
+
+        :param load_dir: 암호화된 .pkl 파일들이 들어있는 폴더
+        """
+        if not os.path.exists(load_dir):
+            self.print(f"[Server] Error: Directory '{load_dir}' not found.")
+            return False        
+
+        pkl_files = glob.glob(os.path.join(load_dir, "*.pkl"))
+        
+        if not pkl_files:
+            self.print("[Server] Warning: No .pkl files found in the directory.")
+            return False
+
+        self.encrypted_gallery = {}
+        for file_path in pkl_files:
+            # 파일명에서 확장자 제거하여 ID로 사용 (예: id_001.ts -> id_001)
+            identity = os.path.splitext(os.path.basename(file_path))[0]
+            
+            # 로드
+            try:
+                with open(file_path, "rb") as f:
+                    serialized_list = pickle.load(f)
+                
+                # 역직렬화: 바이트 문자열들을 다시 ts.ckks_vector 128개 리스트로 복원
+                enc_vec_list = [ts.ckks_vector_from(self.ctx, vec_bytes) for vec_bytes in serialized_list]
+                self.encrypted_gallery[identity] = enc_vec_list
+                
+            except Exception as e:
+                self.print(f"Error loading {identity}.pkl: {e}")
+            
+        self.print(f"[Server] Loaded {len(self.encrypted_gallery)} encrypted identities.")
+        return True
 
     def recognize_encrypted_id2(self, enc_data, id):
         """
@@ -120,13 +155,30 @@ class PointFaceServer:
         plain_gallery_vec = self.plain_gallery.get(id)
             
         # 암호문 리스트와 평문 벡터의 내적(Dot Product)을 for 루프로 안전하게 계산
+
+        # 매칭에 Depth 2를 소모함 (내적 계산 1 + 제곱 판별식 1)
         enc_score = enc_emb_list[0] * plain_gallery_vec[0].item()
         for i in range(1, CONFIG["MODEL"]["feature_dim"]):
             enc_score += enc_emb_list[i] * plain_gallery_vec[i].item()
         
+        enc_mag_sq = enc_emb_list[0] * enc_emb_list[0]
+        for i in range(1, CONFIG["MODEL"]["feature_dim"]):
+            enc_mag_sq += enc_emb_list[i] * enc_emb_list[i]
+
+        # feature를 정규화하지 못하므로 나눗셈 없는 제곱 판별식(D) 계산
+        threshold_sq = PointFaceServer.THRESHOLD ** 2
+        enc_score_sq = enc_score * enc_score
+        
+        # D = Score^2 - (Threshold^2 * Magnitude^2)
+        enc_diff = enc_score_sq - (enc_mag_sq * threshold_sq)
+
         # 3. 임계값(Threshold) 빼고 블라인딩 무작위 수 곱하기
         enc_score = enc_score.sub(PointFaceServer.THRESHOLD).mul(np.random.uniform(10.0, 1000.0))
         end_time = time.time()
+
+        # 원래 서버에는 비밀 키가 없음 - 점수를 알 수 없음
+        # 여기서는 편의를 위해 서버에 비밀 키를 넣음
+        self.print(f"[Server_Debug] {id} Matching Score : {enc_diff.decrypt()[0]}, Similarity : {enc_score_sq.decrypt()[0] / enc_mag_sq.decrypt()[0]:.4f}")
         self.print(f"[Server] 2. 1:1 Matching Time: {end_time - emb_time:.4f}")
         self.print(f"[Server] Total Matching Time: {end_time - start_time:.4f}")
         self.print(f"[Server Side Finished]")
@@ -136,35 +188,54 @@ class PointFaceServer:
     def recognize_encrypted_id(self, enc_data, id):
         """
         # Server - 암호화된 데이터와 매칭 수행
-         
-        ### (현재는 사용 불가함 - 암호화된 갤러리가 아니므로)
+        
+        128개의 암호문을 이용하여 매칭함
         
         :return: score - Threshold * Random Positive Value
         """
-
         self.print("[Server Side Start]")
         start_time = time.time()
-        enc_emb = self.he_model.get_embedding_enc(enc_data)
+        enc_emb_list = self.he_model.get_embedding_enc(enc_data)
         emb_time = time.time()
         self.print(f"[Server] 1. Embedding Time(enc): {emb_time - start_time:.4f}")
+        enc_gallery_list = self.encrypted_gallery.get(id)
 
-        # 2. 갤러리와 동형 연산 (내적) 수행
-        enc_gallery_vec = self.encrypted_gallery.get(id)
-            
-        # 암호문-암호문 간의 매칭 연산 최적화
-        # 1. Element-wise 곱셈: (1, dim) * (1, dim) -> (1, dim) 암호문
-        enc_element_wise = enc_emb * enc_gallery_vec
-        # 2. 평문 행렬 (dim, 1)을 행렬곱하여 내부 슬롯 합산(Summation) 유도 -> (1, 1) 암호문 생성
-        plain_ones = np.ones((CONFIG["MODEL"]["feature_dim"], 1)).tolist()
-        enc_score_tensor = enc_element_wise.mm(plain_ones)
+        # 완벽한 암호문 대 암호문(C x C) 내적 연산 수행
+        # 128개의 채널에 대해 각각 곱셈(C x C) 발생 -> enc_score는 Depth 20 도달
+        enc_score = enc_emb_list[0] * enc_gallery_list[0]
+        for i in range(1, CONFIG["MODEL"]["feature_dim"]):
+            enc_score += enc_emb_list[i] * enc_gallery_list[i]
+
+        # 임베딩 크기 제곱(L2 Norm^2) 계산 (C x C, Depth 20)
+        enc_mag_sq = enc_emb_list[0] * enc_emb_list[0]
+        for i in range(1, CONFIG["MODEL"]["feature_dim"]):
+            enc_mag_sq += enc_emb_list[i] * enc_emb_list[i]
+
+        # 제곱 판별식 계산 (나눗셈 우회)
+        threshold_sq = PointFaceServer.THRESHOLD ** 2
         
-        # 3. 임계값(Threshold) 빼고 블라인딩 무작위 수 곱하기
-        enc_score = enc_score_tensor.sub(PointFaceServer.THRESHOLD).mul(np.random.uniform(10.0, 1000.0))
+        # Score 제곱 (C x C) -> Depth 21 도달
+        enc_score_sq = enc_score * enc_score
+        
+        # Mag_sq에 평문 임계값 곱셈 (C x P) -> Depth 21 도달
+        enc_diff = enc_score_sq - (enc_mag_sq * threshold_sq)
+
+        # 랜덤 블라인딩 처리 (C x P) -> 최종 Depth 22
+        # 클라이언트가 원래 점수를 역산할 수 없도록 무작위 양수 팩터 곱셈
+        blind_factor = np.random.uniform(10.0, 1000.0)
+        enc_blinded_result = enc_diff * blind_factor
+
         end_time = time.time()
-        self.print(f"[Server] 2. 1:1 Matching Time: {end_time - emb_time:.4f}")
+
+        # 원래 서버에는 비밀 키가 없음 - 점수를 알 수 없음
+        # 여기서는 편의를 위해 서버에 비밀 키를 넣음
+        self.print(f"[Server_Debug] {id} Matching Score : {enc_diff.decrypt()[0]}, Similarity : {enc_score_sq.decrypt()[0] / enc_mag_sq.decrypt()[0]:.4f}")
+        
+        self.print(f"[Server] 2. 1:1 Matching (C x C) Time: {end_time - emb_time:.4f}")
         self.print(f"[Server] Total Matching Time: {end_time - start_time:.4f}")
         self.print(f"[Server Side Finished]")
-        return enc_score.serialize()
+        
+        return enc_blinded_result.serialize()
 
 
 
@@ -244,9 +315,16 @@ class HE_PointFaceNet:
             # Linear (Conv1d + BN1d)
             w_lin, b_lin = self._fold_conv_bn_1x1(rsconv.linear[0], rsconv.linear[1])
             
+            # 다항식을 x^2 + (b/a)x + (c/a) 형태로 변경
+            hb_new = hb / ha
+            hc_new = hc / ha
+            
+            # 밖으로 빼낸 'ha'를 다음 레이어인 w2 행렬 전체에 스칼라 곱으로 미리 흡수시킴
+            w2_new = w2 * ha
+
             he_w[f's{i+1}'] = {
-                'w1': w1, 'b1': b1, 'ha': ha, 'hb': hb, 'hc': hc,
-                'w2': w2, 'b2': b2, 'w_lin': w_lin, 'b_lin': b_lin
+                'w1': w1, 'b1': b1, 'hb_new': hb_new, 'hc_new': hc_new,
+                'w2': w2_new, 'b2': b2, 'w_lin': w_lin, 'b_lin': b_lin
             }
             
         # 마지막 FC 레이어
@@ -309,6 +387,42 @@ class HE_PointFaceNet:
             
         return S
     
+    # ====================================================================
+    # 동형암호 로그 합산 함수
+    # ====================================================================
+
+    def _create_compaction_matrix(self, npoint, nsample):
+        """
+        [압축 행렬 (Compaction Matrix)]
+        로그 스케일 합산 후 0, 16, 32... 번째 인덱스에 위치한 정답값들을
+        0, 1, 2... 번째 인덱스로 당겨와 크기가 npoint인 꽉 찬 벡터로 압축합니다.
+        기존 2,048개의 꽉 찬 대각선을 단 128개의 대각선으로 줄입니다.
+        """
+        total_len = npoint * nsample
+        C = np.zeros((total_len, npoint))
+        
+        for i in range(npoint):
+            C[i * nsample, i] = 1.0
+            
+        return C
+
+    def _logarithmic_shift_and_add(self, enc_vector, nsample):
+        """
+        [로그 스케일 합산 (Logarithmic Shift-and-Add)]
+        단 log2(nsample) 번의 회전과 덧셈만으로 이웃점들을 초고속으로 합산합니다.
+        """
+        steps = int(np.log2(nsample))
+        result = enc_vector 
+        for i in range(steps):
+            shift = 2 ** i
+            # TenSEAL의 벡터 슬롯 회전 메서드를 호출합니다.
+            # 파이썬 기반 CKKSVector는 Rotate를 지원하지 않음
+            rotated = result.copy()
+            rotated.rotate(shift)
+            result = result + rotated
+            
+        return result
+
     # ==========================================
     # 단일 SA(Set Abstraction) 블록 연산
     # ==========================================
@@ -326,8 +440,13 @@ class HE_PointFaceNet:
             
         # 2. Hermite Activation
         for j in range(len(enc_x)):
-            step1 = enc_x[j] * w_dict['ha'] + w_dict['hb']
-            enc_x[j] = enc_x[j] * step1 + w_dict['hc']
+            # x^2 연산 (C*C, Depth 1 소모)
+            enc_x_sq = enc_x[j] * enc_x[j]
+            # (b/a)x 연산 (C*P, Depth 1 소모) -> enc_x_sq와 Depth 레벨이 동일하게 맞춰짐
+            enc_x_lin = enc_x[j] * w_dict['hb_new']
+            
+            # 덧셈은 Depth를 소모하지 않음 (최종 소모 Depth = 1)
+            enc_x[j] = enc_x_sq + enc_x_lin + w_dict['hc_new']
             
         # 3. MLP 2 (hid_ch -> in_ch)
         enc_weights = []
@@ -351,6 +470,15 @@ class HE_PointFaceNet:
         # 여기가 제일 오래 걸림
         enc_pooled = [feat.matmul(S) for feat in enc_weighted]
         
+        # =========== 현재 사용 불가 ============
+        # 5-1. 초고속 로그 합산 연산 (행렬곱 대체, Depth 0 소모)
+        #enc_shifted = [self._logarithmic_shift_and_add(feat, nsample) for feat in enc_weighted]
+        # 5-2. 압축 행렬 곱셈 (128번의 대각선 연산만 발생, Depth 1 소모)
+        # 듬성듬성한 벡터에서 유효한 값만 앞으로 당겨와 npoint 크기로 맞춥니다.
+        #C = self._create_compaction_matrix(npoint, nsample).tolist()
+        #enc_pooled = [feat.matmul(C) for feat in enc_shifted]
+        # ======================================
+
         # 6. Final Linear Projection (in_ch -> out_ch)
         enc_new_features = []
         for j in range(w_dict['w_lin'].shape[1]):
@@ -413,10 +541,23 @@ class HE_PointFaceNet:
         self.print("[Server] Global Pooling 및 FC 계층 연산 중...")
         # 256개의 점(npoint)을 하나로 합칩니다.
         final_npoint = sa_params[3]['npoint']
+
         S_global = np.ones((final_npoint, 1)).tolist()
         
         enc_global = [feat.matmul(S_global) for feat in l4_features]
+        # ========== 현재 사용 불가 ============
+        # 1. 초고속 로그 합산 연산 (Depth 0 소모, 회전 4회)
+        # 이미 정의해둔 _logarithmic_shift_and_add 함수를 재활용합니다.
+        # enc_global_shifted = [self._logarithmic_shift_and_add(feat, final_npoint) for feat in l4_features]
         
+        # 2. 극강의 1D 압축 행렬 (Depth 1 소모, 회전 1회)
+        # 인덱스 0번의 값만 쏙 빼서 크기가 1인 암호문으로 압축합니다.
+        # C_global = np.zeros((final_npoint, 1))
+        # C_global[0, 0] = 1.0
+        # C_global_list = C_global.tolist()
+        # enc_global = [feat.matmul(C_global_list) for feat in enc_global_shifted]
+        # ===================
+
         # === Final Fully Connected Layer ===
         # enc_global_feature @ fc_w + fc_b
         enc_emb = []
@@ -431,6 +572,5 @@ class HE_PointFaceNet:
 
         end_time = time.time()
         self.print(f"[Server] Server Total Time: {end_time - start_time:.4f}")
-        self.print("[Server Side Finished]")
         
         return enc_emb

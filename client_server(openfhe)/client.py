@@ -1,5 +1,5 @@
 import os, sys
-import tenseal as ts
+import openfhe
 import time
 import numpy as np
 sys.path.insert(1, os.path.dirname(os.path.dirname(__file__)))
@@ -8,31 +8,23 @@ from config import CONFIG
 from model.pointface import PointFaceNet
 
 class PointFaceClient:
-    def __init__(self, context, logger=None):
+    def __init__(self, key_dir, logger=None):
         if logger:
             self.print = logger
         else:
             self.print = get_logger("matching_client").info
+        self.load_context(key_dir)
 
-        self.load_context(context)
-
-    def load_context(self, context_path):
-        """ 외부에서 공개 키를 가져오기 (비밀키 O)
-        
-        :param context_path: `ckks.Context` file path 
-        """
-        if not os.path.exists(context_path):
-            self.print("[Client] Error: 'secret.context' file not found in directory.")
+    def load_context(self, key_dir):
+        if not os.path.exists(key_dir):
+            self.print("[Client] Error: Key directory not found.")
             return False
-        try:
-            with open(context_path, "rb") as f:
-                context_bytes = f.read()
-                self.ctx = ts.context_from(context_bytes, n_threads=4)
-            self.print("[Client] Context loaded successfully.")
-            return True
-        except Exception as e:
-            self.print(f"[Client] Error loading context: {e}")
-            raise Exception
+            
+        self.ctx, _ = openfhe.DeserializeCryptoContext(os.path.join(key_dir, "cryptocontext.txt"), openfhe.BINARY)
+        self.public_key, _ = openfhe.DeserializePublicKey(os.path.join(key_dir, "key-public.txt"), openfhe.BINARY)
+        self.secret_key, _ = openfhe.DeserializePrivateKey(os.path.join(key_dir, "key-secret.txt"), openfhe.BINARY)
+        self.print("[Client] OpenFHE Context and Keys loaded.")
+        return True
         
     def preprocess(self, npy_path):
         """
@@ -49,6 +41,7 @@ class PointFaceClient:
         self.print("[Client Side #1 Start]")
         points = np.load(npy_path)[:, :3]
         start_time = time.time()
+        points = PointFaceNet.morton_sort(points)
         pre_data = PointFaceNet.preprocess(points, num_points = CONFIG["MODEL"]["num_points"], device = 'cpu')
         end_time = time.time()
         self.print(f"[Client] 1. Preprocessing Time: {end_time - start_time:.4f}")
@@ -56,15 +49,20 @@ class PointFaceClient:
         enc_data = {'rel': {}, 'idx': {}}
         
         for stage in ['s1', 's2', 's3', 's4']:
-            # 1. relation vector는 암호화: PyTorch Tensor -> Numpy -> List -> CKKSVector
-            rel_tensor = pre_data['rel'][stage].squeeze(0).permute(1, 2, 0).reshape(-1, 10).numpy()
-            enc_rel_list = []
+            # 차원을 (1, npoint, nsample, 10) 에서 (npoint, nsample, 10) 으로 줄임
+            # rel_tensor = pre_data['rel'][stage].squeeze(0).permute(1, 2, 0).reshape(-1, 10).numpy()
+            rel_tensor = pre_data['rel'][stage].squeeze(0).permute(2, 1, 0).reshape(-1, 10).numpy()
+            
+            enc_rel_channels = []
             for c in range(10):
-                enc_vec = ts.ckks_vector(self.ctx, rel_tensor[:, c].tolist())
-                enc_rel_list.append(enc_vec.serialize())
+                # OpenFHE 평문 패킹 후 암호화
+                ptxt = self.ctx.MakeCKKSPackedPlaintext(rel_tensor[:, c].tolist())
+                ctxt = self.ctx.Encrypt(self.public_key, ptxt)
+                
+                # 시뮬레이션 최적화: 직렬화(Serialize) 생략하고 객체 직접 전달
+                enc_rel_channels.append(ctxt)
 
-            enc_data['rel'][stage] = enc_rel_list
-            # 2. idx는 평문으로 보냄
+            enc_data['rel'][stage] = enc_rel_channels
             enc_data['idx'][stage] = pre_data['idx'][stage].numpy()
 
         enc_enc_time = time.time()
@@ -85,13 +83,15 @@ class PointFaceClient:
         :return: >>> True if score-threshold > 0 else False
         """
         self.print("[Client Side #2 Start]")
-
         start_time = time.time()
-        # 복호화
-        score = ts.ckks_vector_from(self.ctx, enc_score).decrypt()[0]
+
+        # OpenFHE 복호화
+        ptxt_res = self.ctx.Decrypt(self.secret_key, enc_score)
+        ptxt_res.SetLength(1) # 추출할 슬롯 고정
+        score = ptxt_res.GetRealPackedValue()[0]
+        
         end_time = time.time()
         self.print(f"[Client] 1. Decryption Time: {end_time - start_time:.4f}")
-
         self.print(f"[Client] Client #2 Total Time: {end_time - start_time:.4f}")
         self.print("[Client Side #2 Finished]")
         return True if score > 0 else False
