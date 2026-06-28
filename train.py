@@ -1,10 +1,10 @@
 """
-PointFace (model2) 학습 스크립트.
+PointFace (model) 학습 스크립트.
 
-  - 모델: model2.PointFaceNet  (hid_ch 제거, squared-dist 제거)
+  - 모델: model.PointFaceNet  (hid_ch 제거, squared-dist 제거)
   - feature_dim: 512
-  - 체크포인트 디렉토리: checkpoints_facescape_v2
-  - 체크포인트 파일명: pointface2_epoch_*.pth
+  - 체크포인트 디렉토리: checkpoints7_*
+  - 체크포인트 파일명: pointface_epoch_*.pth
   - 학습 전략: CE (ArcFace warmup) + SupConLoss
 """
 
@@ -25,7 +25,7 @@ from config import CONFIG
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 num_classes  = CONFIG["MODEL"]["num_classes"]
-feature_dim  = DEFAULT_FEATURE_DIM  # 256
+feature_dim  = DEFAULT_FEATURE_DIM 
 num_points   = CONFIG["MODEL"]["num_points"]
 
 ARCFACE_S              = 32.0
@@ -98,7 +98,7 @@ def train_one_epoch(dataloader, epoch):
 
 def save_checkpoint(epoch, save_dir):
     os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, f"pointface2_epoch_{epoch:03d}.pth")
+    save_path = os.path.join(save_dir, f"pointface_epoch_{epoch:03d}.pth")
     torch.save({
         'epoch': epoch,
         'model_state_dict':     model.state_dict(),
@@ -162,12 +162,12 @@ if __name__ == '__main__':
 
     start_epoch = 0
     # 이어서 학습하려면 아래 두 줄 주석 해제 (true resume — LR schedule 그대로 이어감)
-    CHECKPOINT_PATH = os.path.join(savepath, "pointface2_epoch_110.pth")
-    start_epoch = resume_from_checkpoint(CHECKPOINT_PATH)
+    #CHECKPOINT_PATH = os.path.join(savepath, "pointface_epoch_110.pth")
+    #start_epoch = resume_from_checkpoint(CHECKPOINT_PATH)
 
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"[model2] params: {n_params/1e6:.3f}M, feature_dim={feature_dim}, num_points={num_points}")
-    print(f"[model2] checkpoints: {savepath}")
+    print(f"[model] params: {n_params/1e6:.3f}M, feature_dim={feature_dim}, num_points={num_points}")
+    print(f"[model] checkpoints: {savepath}")
 
     for epoch in range(start_epoch, max_epoch):
         start_time = time.time()

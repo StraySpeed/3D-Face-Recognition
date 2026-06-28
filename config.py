@@ -7,13 +7,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG = {
     # 1. 데이터 및 경로 설정
     "PATH": {
-        "data_root": os.path.join(BASE_DIR, "dataset/facescape/facescape_npy/train"),
-        "checkpoint_dir": os.path.join(BASE_DIR, "checkpoints_facescape_v2"),   # model2 전용 체크포인트
-        "gallery_dir": os.path.join(BASE_DIR, "dataset/facescape/facescape_npy/test"),
-        "gallery_storage": os.path.join(BASE_DIR, "gallery_storage/facescape"),
-        "gallery_storage_enc": os.path.join(BASE_DIR, "gallery_storage_enc/facescape"),
-        "secret.context": os.path.join(BASE_DIR, "gallery_storage_enc/secret.context"),
-        "key_dir": os.path.join(BASE_DIR, "gallery_storage_enc/keys"),
+        "data_root": os.path.join(BASE_DIR, "dataset/umbdb"),
+        "checkpoint_dir": os.path.join(BASE_DIR, "checkpoints7_umbdb"),   # model2 전용 체크포인트
+        "gallery_dir": os.path.join(BASE_DIR, "dataset_matching/umbdb_unpreprocessed"),
+        "gallery_storage": os.path.join(BASE_DIR, "gallery_storage7/umbdb"),
+        "gallery_storage_enc": os.path.join(BASE_DIR, "gallery_storage7_enc/umbdb"),
+        "secret.context": os.path.join(BASE_DIR, "gallery_storage7_enc/secret.context"),
+        "key_dir": os.path.join(BASE_DIR, "gallery_storage7_enc/keys"),
     },
 
     # 2. 학습(Training) 하이퍼파라미터
@@ -29,7 +29,7 @@ CONFIG = {
 
     # 3. 모델(Model) 기본 설정
     "MODEL": {
-        "num_classes": 700,
+        "num_classes": 120,
         "input_channel": 3,
         "num_points": 1024,
         "feature_dim": 512,

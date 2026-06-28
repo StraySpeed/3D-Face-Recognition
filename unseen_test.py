@@ -4,8 +4,7 @@ PointFace(model, 4블럭) unseen test 스크립트.
   - test 데이터셋으로 임베딩 추출 → 모든 쌍에 대한 cosine similarity
   - threshold sweep으로 best accuracy / EER 측정
   - positive/negative 분포 시각화
-  - 모델: PointFaceNet (model, 4블럭, 0.35M params)
-  - feature_dim: 512 → 256
+  - 모델: PointFaceNet (model, 4블럭)
   - 체크포인트 디렉토리: CONFIG["PATH"]["checkpoint_dir"]
   - 체크포인트 파일명: pointface_epoch_*.pth
 """
@@ -159,8 +158,9 @@ if __name__ == "__main__":
         exit()
     pth_files = sorted([
         f for f in os.listdir(MODEL_PATH)
-        if f.startswith('pointface2_epoch_') and f.endswith('.pth')
+        if f.startswith('pointface_epoch_') and f.endswith('.pth')
     ])
+    # pth_files = ["pointface_epoch_400.pth"]
     if not pth_files:
         print(f"Error: No checkpoint found in {MODEL_PATH}")
         exit()
@@ -178,7 +178,7 @@ if __name__ == "__main__":
             print(f"\n[Architecture Mismatch]")
             print(f"체크포인트가 현재 모델 구조와 다릅니다.")
             print(f"원인: 모델 구조 변경 후 아직 재학습이 완료되지 않았습니다.")
-            print(f"해결: python train3.py 로 재학습 후 다시 실행하세요.\n")
+            print(f"해결: python train.py 로 재학습 후 다시 실행하세요.\n")
             print(f"상세 오류: {e}")
         else:
             print(f"Error loading model: {e}")

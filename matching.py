@@ -142,7 +142,7 @@ class FaceRecognizer:
 
 def _latest_checkpoint(ckpt_dir):
     """체크포인트 디렉터리에서 epoch 번호가 가장 높은 .pth 파일 반환."""
-    files = glob.glob(os.path.join(ckpt_dir, "pointface2_epoch_*.pth"))
+    files = glob.glob(os.path.join(ckpt_dir, "pointface_epoch_*.pth"))
     if not files:
         raise FileNotFoundError(f"No checkpoint found in {ckpt_dir}")
     return max(files, key=lambda p: int(os.path.splitext(p)[0].split('_')[-1]))
