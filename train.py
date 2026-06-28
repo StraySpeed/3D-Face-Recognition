@@ -1,11 +1,11 @@
 """
-PointFace (model) 학습 스크립트.
+PointFace (model2) 학습 스크립트.
 
-  - 모델: PointFaceNet
-  - feature_dim: 256
-  - 체크포인트 디렉토리: CONFIG path
-  - 체크포인트 파일명: pointface_epoch_*.pth
-  - 학습 전략은 동일: CE (margin=0 cosine softmax) + SupConLoss
+  - 모델: model2.PointFaceNet  (hid_ch 제거, squared-dist 제거)
+  - feature_dim: 512
+  - 체크포인트 디렉토리: checkpoints_facescape_v2
+  - 체크포인트 파일명: pointface2_epoch_*.pth
+  - 학습 전략: CE (ArcFace warmup) + SupConLoss
 """
 
 import os
@@ -28,12 +28,12 @@ num_classes  = CONFIG["MODEL"]["num_classes"]
 feature_dim  = DEFAULT_FEATURE_DIM  # 256
 num_points   = CONFIG["MODEL"]["num_points"]
 
-ARCFACE_S              = 64.0
+ARCFACE_S              = 32.0
 SUPCON_LAMBDA          = 0.5
 ARCFACE_MARGIN_MAX     = CONFIG["TRAIN"]["margin"]
 ARCFACE_WARMUP_EPOCHS  = CONFIG["TRAIN"]["arcface_margin_warmup_epochs"]
 
-supcon_criterion = SupConLoss(temperature=0.07)
+supcon_criterion = SupConLoss(temperature=0.1)
 
 model        = PointFaceNet(feature_dim=feature_dim).to(device)
 arcface_head = ArcFaceHead(feature_dim, num_classes, s=ARCFACE_S, m=0.0).to(device)
@@ -71,9 +71,9 @@ def train_one_epoch(dataloader, epoch):
         warmup_margin = min(ARCFACE_MARGIN_MAX,
                            ARCFACE_MARGIN_MAX * epoch / ARCFACE_WARMUP_EPOCHS)
         logits = arcface_head(emb_all, labels_all, margin=warmup_margin)
-        loss_ce    = F.cross_entropy(logits, labels_all)
+        loss_ce     = F.cross_entropy(logits, labels_all)
         loss_supcon = supcon_criterion(emb_all, labels_all)
-        loss       = loss_ce + SUPCON_LAMBDA * loss_supcon
+        loss        = loss_ce + SUPCON_LAMBDA * loss_supcon
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(
@@ -98,7 +98,7 @@ def train_one_epoch(dataloader, epoch):
 
 def save_checkpoint(epoch, save_dir):
     os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, f"pointface_epoch_{epoch:03d}.pth")
+    save_path = os.path.join(save_dir, f"pointface2_epoch_{epoch:03d}.pth")
     torch.save({
         'epoch': epoch,
         'model_state_dict':     model.state_dict(),
@@ -146,7 +146,7 @@ def resume_from_checkpoint(checkpoint_path, reset_optimizer=False):
 
 
 if __name__ == '__main__':
-    logger = get_logger(name='train')
+    logger = get_logger(name='train2')
     print  = logger.info
 
     train_loader = get_dataloader(
@@ -162,12 +162,12 @@ if __name__ == '__main__':
 
     start_epoch = 0
     # 이어서 학습하려면 아래 두 줄 주석 해제 (true resume — LR schedule 그대로 이어감)
-    # CHECKPOINT_PATH = os.path.join(savepath, "pointface_epoch_200.pth")
-    # start_epoch = resume_from_checkpoint(CHECKPOINT_PATH)
+    CHECKPOINT_PATH = os.path.join(savepath, "pointface2_epoch_110.pth")
+    start_epoch = resume_from_checkpoint(CHECKPOINT_PATH)
 
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"[model] params: {n_params/1e6:.3f}M, feature_dim={feature_dim}, num_points={num_points}")
-    print(f"[model] checkpoints: {savepath}")
+    print(f"[model2] params: {n_params/1e6:.3f}M, feature_dim={feature_dim}, num_points={num_points}")
+    print(f"[model2] checkpoints: {savepath}")
 
     for epoch in range(start_epoch, max_epoch):
         start_time = time.time()

@@ -1,15 +1,19 @@
 """
-PointFaceNet
+PointFaceNet (model2)
 
 설계:
-  - 4 SABlock + Global Sum Pool (채널만 조정)
-  - 채널 수:
-      SA1:  64ch (model2: 128) — 64 × 256pt = 16384  ✓ 1 ct 정확히 채움
-      SA2: 128ch (model2: 256) — 128 × 64pt =  8192
-      SA3: 256ch (model2: 512) — 256 × 16pt =  4096
-      SA4: 512ch (model2: 1024) — 512 × 4pt =  2048
-      Global sum pool → 512
-      FC: 512 → 256
+  - 4 SABlock + Multi-scale Aggregation
+  - squared distance 입력 제거: 모든 블록이 [x_g, x_rel] 만 사용
+  - SABlock 내부 구조:
+      Conv2d(in_ch*2 → hid_ch) → HerPN → Conv2d(hid_ch → out_ch) → sum_pool → BN
+  - 채널 수 (Config C: SA1 2×, SA4 병목 유지):
+      SA1: 128ch — 256pts  → global sum pool → (B, 128)
+      SA2: 256ch —  64pts  → global sum pool → (B, 256)
+      SA3: 512ch —  16pts  → global sum pool → (B, 512)
+      SA4: 512ch —   4pts  → global sum pool → (B, 512)
+  - Multi-scale concat: (B, 128+256+512+512) = (B, 1408)
+  - FC: 1408 → feature_dim (512)
+  - FHE 최대 채널: 512 (SA4 병목으로 채널 폭발 방지)
 """
 
 import torch
@@ -19,15 +23,16 @@ import numpy as np
 from .modules.sa_block import SABlock
 
 
-# (in_ch, hid_ch, out_ch, k, use_squared_dist)
+# (in_ch, hid_ch, out_ch, k)
+# Config C: SA1 채널 2배, SA4 병목(hid=256)으로 FHE 최대 채널 512 고정
 SA_BLOCKS = [
-    (3,    32,  64,   4, True),    # SA1: 1024 → 256, 채널 3 → 64
-    (64,   64,  128,  4, False),   # SA2:  256 →  64, 채널 64 → 128
-    (128,  128, 256,  4, False),   # SA3:   64 →  16, 채널 128 → 256
-    (256,  256, 512,  4, False),   # SA4:   16 →   4, 채널 256 → 512
+    (3,    64,  128,  4),   # SA1: concat  6→ 64→128  (1024→256pts)
+    (128, 128,  256,  4),   # SA2: concat 256→128→256  (256→ 64pts)
+    (256, 256,  512,  4),   # SA3: concat 512→256→512  ( 64→ 16pts)
+    (512, 256,  512,  4),   # SA4: concat1024→256→512  (  16→  4pts, 병목)
 ]
 
-DEFAULT_FEATURE_DIM = 256
+DEFAULT_FEATURE_DIM = 512
 DEFAULT_NUM_POINTS  = 1024
 
 
@@ -36,26 +41,32 @@ class PointFaceEncoder(nn.Module):
     Z-order 정렬된 (B, 3, 1024) 입력 → feature_dim 임베딩.
 
     forward:
-      SA1 → SA2 → SA3 → SA4 → global_sum_pool → FC → BN
+      SA1 → SA2 → SA3 → SA4
+       ↓     ↓     ↓     ↓    (각 블록 출력을 global sum pool)
+      pool  pool  pool  pool
+       └─────┴─────┴─────┘ concat(1408ch) → FC → BN
     """
     def __init__(self, feature_dim=DEFAULT_FEATURE_DIM):
         super().__init__()
         self.sa_blocks = nn.ModuleList([
-            SABlock(in_ch, hid_ch, out_ch, k=k, use_squared_dist=use_sq)
-            for (in_ch, hid_ch, out_ch, k, use_sq) in SA_BLOCKS
+            SABlock(in_ch, hid_ch, out_ch, k=k)
+            for (in_ch, hid_ch, out_ch, k) in SA_BLOCKS
         ])
-        last_out_ch = SA_BLOCKS[-1][2]
+        # multi-scale concat 차원: 각 SA block의 out_ch 합산
+        ms_dim = sum(cfg[2] for cfg in SA_BLOCKS)  # 128+256+512+512 = 1408
         self.fc = nn.Sequential(
-            nn.Linear(last_out_ch, feature_dim, bias=False),
+            nn.Linear(ms_dim, feature_dim, bias=False),
             nn.BatchNorm1d(feature_dim),
         )
 
     def forward(self, points):
         x = points
+        scale_feats = []
         for block in self.sa_blocks:
             x = block(x)
-        # SA4 출력 (B, C, 4) → global sum pool → (B, C)
-        x = x.sum(dim=2)
+            scale_feats.append(x.sum(dim=2))  # (B, out_ch) — global sum pool
+        # multi-scale concat: (B, 64+128+256) = (B, 448)
+        x = torch.cat(scale_feats, dim=1)
         x = self.fc(x)
         return x
 

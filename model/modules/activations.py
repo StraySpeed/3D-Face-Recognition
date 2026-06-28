@@ -16,7 +16,7 @@ class HerPNActivation(nn.Module):
 
     CKKS 호환: 결과는 a·x² + b·x + c 형태의 degree-2 다항식으로 전개 가능.
     """
-    def __init__(self, num_channels, ndim=1, eps=1e-2):
+    def __init__(self, num_channels, ndim=1, eps=1e-3):
         super().__init__()
         self.register_buffer('f1', torch.tensor(0.5, dtype=torch.float32))
         self.register_buffer('f2', torch.tensor(1.0 / (2.0 * math.sqrt(math.pi)), dtype=torch.float32))
