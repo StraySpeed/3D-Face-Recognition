@@ -5,270 +5,202 @@ from model.pointface import PointFaceNet
 from logger import get_logger
 from config import CONFIG
 
+
 class FaceRecognizer:
     def __init__(self, model_path, device='cpu'):
         self.device = torch.device(device)
-        
-        # 1. 모델 초기화 및 가중치 로드
-        # Inference 시에는 num_classes가 중요하지 않지만 구조를 맞추기 위해 넣음
-        self.model = PointFaceNet(num_classes=CONFIG["MODEL"]["num_classes"]).to(self.device)
-        
-        # 가중치 파일 로드
+        self.num_points = CONFIG["MODEL"]["num_points"]
+
+        self.model = PointFaceNet(feature_dim=CONFIG["MODEL"]["feature_dim"]).to(self.device)
+
         checkpoint = torch.load(model_path, map_location=self.device)
-        if 'model_state_dict' in checkpoint:
-            self.model.load_state_dict(checkpoint['model_state_dict'])
-        else:
-            self.model.load_state_dict(checkpoint)
-            
-        # 2. 평가 모드 전환 (Dropout, BatchNorm 고정) 
+        self.model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
         self.model.eval()
-        
-        self.gallery_dict = {} 
+
+        self.gallery_dict = {}
         print(f"Model loaded from {model_path}")
 
     def get_embedding(self, npy_path):
-        if not os.path.exists(npy_path): return None
+        if not os.path.exists(npy_path):
+            return None
         try:
-            points = np.load(npy_path)[:, :3] # XYZ만 사용
-            pre_data = PointFaceNet.preprocess(points)
-
+            points = np.load(npy_path)[:, :3]
+            pre_data = PointFaceNet.preprocess(points, num_points=self.num_points,
+                                               device=str(self.device))
             with torch.no_grad():
-                embedding = self.model(pre_data).cpu().numpy().flatten()
-            
-            # L2 Normalize (개별 임베딩도 정규화)
-            return embedding / np.linalg.norm(embedding)
+                emb = self.model(pre_data).cpu().numpy().flatten()
+            norm = np.linalg.norm(emb)
+            return emb / norm if norm > 1e-8 else emb
         except Exception as e:
             print(f"Error processing {npy_path}: {e}")
             return None
-        
+
     def register_gallery(self, data_root):
-        """
-        갤러리 등록 (Average Embedding 방식)
-        폴더 내의 모든 파일을 읽어서 임베딩의 평균을 구함
-        """
+        """갤러리 등록: 각 ID의 모든 샘플 임베딩을 평균."""
         self.gallery_dict = {}
-        
-        # 폴더 목록 가져오기
-        identities = sorted([d for d in os.listdir(data_root) 
-                             if os.path.isdir(os.path.join(data_root, d)) and not d.startswith('.')])
-        
-        print(f"Registering {len(identities)} identities (Averaging mode)...")
-        
+        identities = sorted([
+            d for d in os.listdir(data_root)
+            if os.path.isdir(os.path.join(data_root, d)) and not d.startswith('.')
+        ])
+        print(f"Registering {len(identities)} identities...")
+
         for identity in identities:
             person_dir = os.path.join(data_root, identity)
             embeddings = []
-            
-            # 1. 해당 ID 폴더 내의 모든 파일 순회
-            files = [f for f in os.listdir(person_dir) if f.endswith('.npy')]
-            
-            for filename in files:
-                file_path = os.path.join(person_dir, filename)
-                
-                # 임베딩 추출
-                emb = self.get_embedding(file_path)
-                
+            for f in os.listdir(person_dir):
+                if not f.endswith('.npy'):
+                    continue
+                emb = self.get_embedding(os.path.join(person_dir, f))
                 if emb is not None:
                     embeddings.append(emb)
-            
-            # 2. 유효한 임베딩이 하나라도 있으면 평균 계산
-            if len(embeddings) > 0:
-                # (N, 512) -> (512,) 평균 계산
-                mean_embedding = np.mean(embeddings, axis=0)
-                
-                # 평균을 내면 벡터 길이가 1보다 작아지므로 다시 정규화해야 함
-                norm = np.linalg.norm(mean_embedding)
-                if norm > 0:
-                    mean_embedding = mean_embedding / norm
-                    
-                self.gallery_dict[identity] = mean_embedding
+
+            if embeddings:
+                mean_emb = np.mean(embeddings, axis=0)
+                norm = np.linalg.norm(mean_emb)
+                self.gallery_dict[identity] = mean_emb / norm if norm > 1e-8 else mean_emb
             else:
-                print(f"Warning: No valid files found for {identity}")
-                
-        print(f"Total: {len(self.gallery_dict)} IDs.")
+                print(f"Warning: no valid embeddings for {identity}")
+
+        print(f"Registered {len(self.gallery_dict)} IDs.")
+
+    def _embed_probe(self, npy_path):
+        """probe 포인트클라우드 → L2 정규화 임베딩 (numpy 1-D)."""
+        points = np.load(npy_path)[:, :3]
+        pre_data = PointFaceNet.preprocess(points, num_points=self.num_points,
+                                           device=str(self.device))
+        with torch.no_grad():
+            emb = self.model(pre_data).cpu().numpy().flatten()
+        norm = np.linalg.norm(emb)
+        return emb / norm if norm > 1e-8 else emb
 
     def recognize(self, npy_path, threshold=CONFIG["MATCHING"]["threshold"]):
-        """
-        새로운 얼굴(Probe) 인식
-        """
+        """1:N 인식."""
         if not os.path.exists(npy_path):
             return "File Error", 0.0
 
-        # 1. 입력 데이터 로드 및 임베딩 추출
-        points = np.load(npy_path)[:, :3]
-        print("[1:N Recognization Start]")
-        start_time = time.time()
-        pre_data = PointFaceNet.preprocess(points)
-        pre_time = time.time()
-        print(f"0. Preprocess Time: {pre_time - start_time:.4f}")
-        
-        with torch.no_grad():
-            probe_emb = self.model(pre_data).cpu() # (1, 512)
+        t0 = time.time()
+        probe_emb = self._embed_probe(npy_path)
+        t1 = time.time()
+        print(f"[1:N] Embed: {t1-t0:.4f}s")
 
-        emb_time = time.time()
-        print(f"1. Embedding Time: {emb_time - pre_time:.4f}")
+        best_score, best_id = -1.0, "Unknown"
+        for gid, gemb in self.gallery_dict.items():
+            score = float(np.dot(probe_emb, gemb))
+            if score > best_score:
+                best_score, best_id = score, gid
 
-        # 2. 매칭 (Gallery 전체와 비교)
-        best_score = -1.0
-        best_id = "Unknown"
-        
-        sim_start_time = time.time()
-        for gallery_id, gallery_emb in self.gallery_dict.items():
-            
-            # 코사인 유사도 계산 (이미 정규화된 벡터이므로 내적과 동일)
-            # Similarity = A . B (Range: -1 ~ 1)
-            similarity = torch.sum(probe_emb * gallery_emb).item()
-            if similarity > best_score:
-                best_score = similarity
-                best_id = gallery_id
+        t2 = time.time()
+        print(f"[1:N] Match: {t2-t1:.4f}s  Total: {t2-t0:.4f}s")
 
-        end_time = time.time()
-        print(f"2. 1:N Matching Time: {end_time - sim_start_time:.4f}")
-        print(f"3. Total Matching Time: {end_time - start_time:.4f}")
-        print(f"[1:N Matching Finished]")
-
-        # 3. 임계값(Threshold) 비교
         if best_score < threshold:
             return "Unknown", best_score
-        else:
-            return best_id, best_score
+        return best_id, best_score
 
-    def recognize_id(self, npy_path, id, threshold=CONFIG["MATCHING"]["threshold"]):
-        """
-        새로운 얼굴(Probe) 인식
-        """
+    def recognize_id(self, npy_path, identity_id,
+                     threshold=CONFIG["MATCHING"]["threshold"]):
+        """1:1 인증."""
         if not os.path.exists(npy_path):
             return "File Error", 0.0
 
-        # 1. 입력 데이터 로드 및 임베딩 추출
-        points = np.load(npy_path)[:, :3]
+        gallery_emb = self.gallery_dict.get(identity_id)
+        if gallery_emb is None:
+            print(f"Warning: {identity_id} not in gallery.")
+            return "Unknown", 0.0
 
-        print("[1:1 Recognization Start]")
-        start_time = time.time()
-        pre_data = PointFaceNet.preprocess(points)
-        pre_time = time.time()
-        print(f"0. Preprocess Time: {pre_time - start_time:.4f}")
+        t0 = time.time()
+        probe_emb = self._embed_probe(npy_path)
+        score = float(np.dot(probe_emb, gallery_emb))
+        print(f"[1:1] {identity_id} Score: {score:.4f}  Time: {time.time()-t0:.4f}s")
 
-        with torch.no_grad():
-            probe_emb = self.model(pre_data).cpu() # (1, 512)
+        if score < threshold:
+            return "Unknown", score
+        return identity_id, score
 
-        emb_time = time.time()
-        print(f"1. Embedding Time: {emb_time - pre_time:.4f}")
+    def save_gallery(self, save_dir=None):
+        save_dir = save_dir or CONFIG["PATH"]["gallery_storage"]
+        os.makedirs(save_dir, exist_ok=True)
+        for identity, emb in self.gallery_dict.items():
+            np.save(os.path.join(save_dir, f"{identity}.npy"), emb)
+        print(f"Saved {len(self.gallery_dict)} embeddings to {save_dir}.")
 
-        # 2. 매칭 (Gallery 전체와 비교)
-        best_score = -1.0
-        best_id = "Unknown"
-        
-        gallery_id = id
-        gallery_emb = self.gallery_dict.get(gallery_id, None)
-
-        # 코사인 유사도 계산 (이미 정규화된 벡터이므로 내적과 동일)
-        # Similarity = A . B (Range: -1 ~ 1)
-        sim_start_time = time.time()
-        similarity = torch.sum(probe_emb * gallery_emb).item()
-        if similarity > best_score:
-            best_score = similarity
-            best_id = gallery_id
-        end_time = time.time()
-        print(f"2. 1:1 Matching Time: {end_time - sim_start_time:.4f}")
-        print(f"3. Total Matching Time: {end_time - start_time:.4f}")
-        print(f"[1:1 Matching Finished]")
-        
-        # 3. 임계값(Threshold) 비교
-        if best_score < threshold:
-            return "Unknown", best_score
-        else:
-            return best_id, best_score
-        
-    def save_gallery_individual(self, save_dir="./gallery_storage"):
-        """
-        각 Identity의 임베딩을 개별 .npy 파일로 저장
-        """
-        if not self.gallery_dict:
-            print("Warning: Gallery is empty. Nothing to save.")
-            return
-
-        # 저장 폴더 생성
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-            
-        print(f"Saving individual embeddings to '{save_dir}'...")
-        
-        count = 0
-        for identity, embedding in self.gallery_dict.items():
-            # 파일명: id_XXX.npy
-            file_path = os.path.join(save_dir, f"{identity}.npy")
-            np.save(file_path, embedding)
-            count += 1
-            
-        print(f"Saved {count} files successfully.")
-
-    def load_gallery_individual(self, load_dir="./gallery_storage"):
-        """
-        폴더 내의 모든 .npy 파일을 읽어서 갤러리로 로드
-        """
+    def load_gallery(self, load_dir=None):
+        load_dir = load_dir or CONFIG["PATH"]["gallery_storage"]
         if not os.path.exists(load_dir):
-            print(f"Error: Directory '{load_dir}' not found.")
+            print(f"Error: {load_dir} not found.")
             return False
-            
-        npy_files = glob.glob(os.path.join(load_dir, "*.npy"))
-        
-        if not npy_files:
-            print("Warning: No .npy files found in the directory.")
+        files = glob.glob(os.path.join(load_dir, "*.npy"))
+        if not files:
+            print("Warning: no .npy files found.")
             return False
-            
-        print(f"Loading embeddings from '{load_dir}'...")
-        
-        self.gallery_dict = {}
-        for file_path in npy_files:
-            # 파일명에서 확장자 제거하여 ID로 사용 (예: id_001.npy -> id_001)
-            filename = os.path.basename(file_path)
-            identity = os.path.splitext(filename)[0]
-            
-            # 로드
-            embedding = np.load(file_path)
-            self.gallery_dict[identity] = embedding
-            
-        print(f"Loaded {len(self.gallery_dict)} identities.")
+        self.gallery_dict = {
+            os.path.splitext(os.path.basename(f))[0]: np.load(f)
+            for f in files
+        }
+        print(f"Loaded {len(self.gallery_dict)} identities from {load_dir}.")
         return True
 
+
+def _latest_checkpoint(ckpt_dir):
+    """체크포인트 디렉터리에서 epoch 번호가 가장 높은 .pth 파일 반환."""
+    files = glob.glob(os.path.join(ckpt_dir, "pointface_epoch_*.pth"))
+    if not files:
+        raise FileNotFoundError(f"No checkpoint found in {ckpt_dir}")
+    return max(files, key=lambda p: int(os.path.splitext(p)[0].split('_')[-1]))
+
+
 if __name__ == "__main__":
-    # 1. 설정
-    print = get_logger(name='matching_v3').info
-    MODEL_PATH = os.path.join(CONFIG["PATH"]["checkpoint_dir"], "pointface_epoch_200.pth")  # 학습된 모델 경로
-    DATABASE_DIR = CONFIG["PATH"]["gallery_storage"] # 저장된 데이터들
-    MATCHING_DIR = CONFIG["PATH"]["gallery_dir"] # 인식할 얼굴들이 있는 폴더
-    THRESHOLD = CONFIG["MATCHING"]["threshold"] # 인식할 얼굴들이 있는 폴더
+    print = get_logger(name='matching').info
 
-    # 2. 인식기 초기화
-    recognizer = FaceRecognizer(MODEL_PATH, 'cpu')
-    
-    # 3. 갤러리 등록
-    #recognizer.register_gallery(MATCHING_DIR)
-    #recognizer.save_gallery_individual(DATABASE_DIR)
-    # 저장된 데이터가 있으면 로드
-    recognizer.load_gallery_individual(DATABASE_DIR)
+    CKPT_DIR    = CONFIG["PATH"]["checkpoint_dir"]
+    MATCHING_DIR = CONFIG["PATH"]["gallery_dir"]
+    DATABASE_DIR = CONFIG["PATH"]["gallery_storage"]
+    THRESHOLD    = CONFIG["MATCHING"]["threshold"]
 
-    # 4. 인식 수행    
-    identities = sorted([d for d in os.listdir(MATCHING_DIR) if os.path.isdir(os.path.join(MATCHING_DIR, d)) and not d.startswith('.')])
-    correct = 0; wrong = 0; total = 0; FAR = 0; FRR = 0
-    for id in identities:
-        person_dir = os.path.join(MATCHING_DIR, id)
-        for f in os.listdir(person_dir):
+    model_path = _latest_checkpoint(CKPT_DIR)
+    print(f"Using checkpoint: {model_path}")
+
+    recognizer = FaceRecognizer(model_path, device=CONFIG["DEVICE"])
+
+    # 갤러리 등록 후 저장 (이미 저장됐으면 load_gallery 사용)
+    recognizer.register_gallery(MATCHING_DIR)
+    recognizer.save_gallery(DATABASE_DIR)
+    # recognizer.load_gallery(DATABASE_DIR)
+
+    identities = sorted([
+        d for d in os.listdir(MATCHING_DIR)
+        if os.path.isdir(os.path.join(MATCHING_DIR, d)) and not d.startswith('.')
+    ])
+
+    total = correct = wrong = 0
+    TP = FP = TN = FN = 0
+
+    for identity_id in identities:
+        person_dir = os.path.join(MATCHING_DIR, identity_id)
+        for fname in os.listdir(person_dir):
+            if not fname.endswith('.npy'):
+                continue
             total += 1
-            identity_file = os.path.join(person_dir, f)
-            print(f"[Matching] Identity: {id}")
+            fpath = os.path.join(person_dir, fname)
 
-            # 1:N Matching
-            #identity, score = recognizer.recognize(identity_file, threshold=THRESHOLD)
+            # 1:1 인증
+            pred_id, score = recognizer.recognize_id(fpath, identity_id,
+                                                     threshold=THRESHOLD)
+            print(f"[{identity_id}] pred={pred_id}  score={score:.4f}")
 
-            # 1:1 Matching
-            identity, score =recognizer.recognize_id(identity_file, id, threshold=THRESHOLD)
-
-            print(f"[Result] Identity: {identity} (Score: {score:.4f})")
-
-            if id == identity:
-                correct += 1
+            match = (pred_id == identity_id)
+            if match:
+                correct += 1; TP += 1
             else:
                 wrong += 1
+                if pred_id == "Unknown":
+                    FN += 1   # 맞는 사람인데 거부
+                else:
+                    FP += 1   # 틀린 사람으로 수락
 
-    print(f"[Result] Total : {total}, Correct : {correct} ({correct} / {total}), Wrong : {wrong} ({wrong} / {total})")
+    TAR = TP / (TP + FN) if (TP + FN) > 0 else 0.0
+    FAR = FP / (FP + TN) if (FP + TN) > 0 else 0.0
+    FRR = FN / (FN + TP) if (FN + TP) > 0 else 0.0
+
+    print(f"[Result] Total={total}  Correct={correct}  Wrong={wrong}")
+    print(f"[Result] TAR={TAR:.4f}  FAR={FAR:.4f}  FRR={FRR:.4f}")
+    print(f"[Result] Acc={correct/total*100:.2f}%" if total > 0 else "")

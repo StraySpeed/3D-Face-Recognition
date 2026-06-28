@@ -1,127 +1,87 @@
-try:
-    from modules.utils.utils import farthest_point_sample, query_ball_point, index_points
-    from pointface_encoder import PointFaceEncoder
-except ImportError:
-    from .modules.utils.utils import farthest_point_sample, query_ball_point, index_points
-    from .pointface_encoder import PointFaceEncoder
+"""
+PointFaceNet
 
+설계:
+  - 4 SABlock + Global Sum Pool (채널만 조정)
+  - 채널 수:
+      SA1:  64ch (model2: 128) — 64 × 256pt = 16384  ✓ 1 ct 정확히 채움
+      SA2: 128ch (model2: 256) — 128 × 64pt =  8192
+      SA3: 256ch (model2: 512) — 256 × 16pt =  4096
+      SA4: 512ch (model2: 1024) — 512 × 4pt =  2048
+      Global sum pool → 512
+      FC: 512 → 256
+"""
+
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from config import CONFIG
-import torch
 import numpy as np
+from .modules.sa_block import SABlock
+
+
+# (in_ch, hid_ch, out_ch, k, use_squared_dist)
+SA_BLOCKS = [
+    (3,    32,  64,   4, True),    # SA1: 1024 → 256, 채널 3 → 64
+    (64,   64,  128,  4, False),   # SA2:  256 →  64, 채널 64 → 128
+    (128,  128, 256,  4, False),   # SA3:   64 →  16, 채널 128 → 256
+    (256,  256, 512,  4, False),   # SA4:   16 →   4, 채널 256 → 512
+]
+
+DEFAULT_FEATURE_DIM = 256
+DEFAULT_NUM_POINTS  = 1024
+
+
+class PointFaceEncoder(nn.Module):
+    """
+    Z-order 정렬된 (B, 3, 1024) 입력 → feature_dim 임베딩.
+
+    forward:
+      SA1 → SA2 → SA3 → SA4 → global_sum_pool → FC → BN
+    """
+    def __init__(self, feature_dim=DEFAULT_FEATURE_DIM):
+        super().__init__()
+        self.sa_blocks = nn.ModuleList([
+            SABlock(in_ch, hid_ch, out_ch, k=k, use_squared_dist=use_sq)
+            for (in_ch, hid_ch, out_ch, k, use_sq) in SA_BLOCKS
+        ])
+        last_out_ch = SA_BLOCKS[-1][2]
+        self.fc = nn.Sequential(
+            nn.Linear(last_out_ch, feature_dim, bias=False),
+            nn.BatchNorm1d(feature_dim),
+        )
+
+    def forward(self, points):
+        x = points
+        for block in self.sa_blocks:
+            x = block(x)
+        # SA4 출력 (B, C, 4) → global sum pool → (B, C)
+        x = x.sum(dim=2)
+        x = self.fc(x)
+        return x
+
 
 class PointFaceNet(nn.Module):
-    def __init__(self, num_classes):
-        super(PointFaceNet, self).__init__()
-        self.encoder = PointFaceEncoder()
-        
-        # 학습 시 Identity Classification을 위한 Softmax Layer
-        self.classifier = nn.Linear(CONFIG["MODEL"]["feature_dim"], num_classes)
+    """학습용 래퍼: forward는 L2 정규화 임베딩, encode는 정규화 전."""
+    def __init__(self, feature_dim=DEFAULT_FEATURE_DIM):
+        super().__init__()
+        self.encoder = PointFaceEncoder(feature_dim=feature_dim)
 
-    def forward(self, pre_data=None):
-        # 1. 인코더를 통해 임베딩 추출
-        embedding = self.encoder(pre_data)
-        
-        # 2. L2 정규화
-        norm_embedding = F.normalize(embedding, p=2, dim=1)
-        
-        # 3. 학습용 Logits 계산
-        if self.training:
-            logits = self.classifier(norm_embedding)
-            return norm_embedding, logits
-        else:
-            return norm_embedding
-        
+    def encode(self, points):
+        return self.encoder(points)
+
+    def forward(self, points):
+        emb = self.encoder(points)
+        return F.normalize(emb, p=2, dim=1)
+
     @staticmethod
-    def preprocess(points, num_points=CONFIG["MODEL"]["num_points"], device='cpu'):
+    def morton_sort(points_np):
+        """ 
+        3D 공간의 점(N, 3)들을 Z-Order 커브를 따라 정렬 (Numpy 기반)
         """
-        ## 점들을 전처리하는 함수
-
-        :return pre_data: >>> dict('rel': dict('s1': [], 's2': [], 's3': [], 's4': []), 'idx': dict('s1': [], 's2': [], 's3': [], 's4': []))
-        """
-        total_points = len(points)
-        if total_points > num_points:
-            # 균등 샘플링 (랜덤성 배제)
-            indices = np.linspace(0, total_points - 1, num_points, dtype=int)
-            points = points[indices, :]
-        else:
-            # 부족할 경우 고정 시드로 복원 추출
-            np.random.seed(1)
-            choice = np.random.choice(total_points, num_points, replace=True)
-            np.random.seed(None)
-            points = points[choice, :]
-            
-        # Zero-centering & Unit Sphere 정규화
-        centroid = np.mean(points, axis=0)
-        points = points - centroid
-        m = np.max(np.sqrt(np.sum(points**2, axis=1)))
-        points = points / m
-
-        # 텐서 변환 및 Y축 정렬
-        curr_xyz = torch.tensor(points, dtype=torch.float32).to(device)
-        
-        # 항상 (3, N) 형태로 보장
-        if curr_xyz.shape[1] == 3:
-            curr_xyz = curr_xyz.t()
-            
-        # Y축(인덱스 1) 기준 오름차순 정렬
-        sorted_indices = torch.argsort(curr_xyz[1, :])
-        curr_xyz = curr_xyz[:, sorted_indices]
-
-        # 모델 입력용 pre_data 조립 (Stage 1~4)
-        pre_data = {'rel': {}, 'idx': {}}
-        sa_params = CONFIG['SA_PARAMS']
-        
-        for i, params in enumerate(sa_params):
-            npoint = params['npoint']
-            radius = params['radius']
-            nsample = params['nsample']
-            
-            # 유틸 함수용 배치 차원 추가 -> (1, 3, N)
-            curr_xyz_b = curr_xyz.unsqueeze(0) 
-            xyz_trans = curr_xyz_b.transpose(1, 2).contiguous() # (1, N, 3)
-            
-            # FPS & Ball Query
-            fps_idx = farthest_point_sample(xyz_trans, npoint)
-            centroids_b = index_points(xyz_trans, fps_idx).transpose(1, 2).contiguous()
-            idx_b = query_ball_point(radius, nsample, xyz_trans, centroids_b.transpose(1, 2).contiguous())
-            
-            # 차원 축소
-            centroids = centroids_b.squeeze(0) # (3, npoint)
-            idx = idx_b.squeeze(0).long()      # (npoint, nsample)
-            
-            # --- 10차원 Relation Vector 계산 ---
-            C, N = curr_xyz.shape
-            idx_safe = idx.clone()
-            idx_safe[idx_safe >= N] = 0 # Dummy index 방어
-            
-            grouped_xyz = curr_xyz[:, idx_safe.flatten()].view(C, npoint, nsample)
-            center_xyz = centroids.unsqueeze(-1).expand(C, npoint, nsample)
-            diff = center_xyz - grouped_xyz
-            sq_dist = torch.sum(diff ** 2, dim=0, keepdim=True)
-            
-            rel_vec = torch.cat([center_xyz, grouped_xyz, diff, sq_dist], dim=0) # (10, npoint, nsample)
-            # ---------------------------------------------------
-            
-            stage_key = f's{i+1}'
-            
-            # DataLoader가 해주던 배치 묶기(Batching) 작업을 수동으로 처리
-            # 모델은 항상 맨 앞에 Batch 차원(B)을 요구하므로 .unsqueeze(0)
-            pre_data['rel'][stage_key] = rel_vec.unsqueeze(0) # -> (1, 10, npoint, nsample)
-            pre_data['idx'][stage_key] = idx.unsqueeze(0)     # -> (1, npoint, nsample)
-            
-            # 다음 단계를 위해 갱신
-            curr_xyz = centroids
-            
-        return pre_data
-    
-    @staticmethod
-    def morton_sort(points):
-        """ 3D 공간의 점들을 Z-Order 커브를 따라 1D 배열로 정렬 """
-        coords = points[:, :3]
+        coords = points_np[:, :3]
         p_min = np.min(coords, axis=0)
         p_max = np.max(coords, axis=0)
+        
         # 0~1로 정규화 후 10bit(0~1023) 양자화
         norm_points = (coords - p_min) / (p_max - p_min + 1e-8)
         quantized = np.clip(np.floor(norm_points * 1024), 0, 1023).astype(np.uint32)
@@ -139,4 +99,35 @@ class PointFaceNet(nn.Module):
         z = np.vectorize(part1by2)(quantized[:, 2])
         
         codes = (z << 2) | (y << 1) | x
-        return points[np.argsort(codes)]
+        return points_np[np.argsort(codes)]
+
+    @staticmethod
+    def preprocess(points, num_points=1024, device='cpu'):
+        """
+        추론(Inference) 및 클라이언트 전용 전처리 로직.
+        (N, 3) numpy 배열을 입력받아 모델이 기대하는 (1, 3, num_points) 텐서로 변환합니다.
+        """
+        # 1. Deterministic Sampling (항상 일정한 간격으로 점을 샘플링하여 Double Sort 버그 방지)
+        total = len(points)
+        if total > num_points:
+            indices = np.linspace(0, total - 1, num_points, dtype=int)
+            sampled_points = points[indices, :]
+        else:
+            rng = np.random.RandomState(1) # 모자란 경우 고정된 시드로 복원 추출
+            choice = rng.choice(total, num_points, replace=True)
+            sampled_points = points[choice, :]
+
+        # 2. Normalization (Unit Sphere: 중심점 빼고 최대 거리로 나누기)
+        centroid = np.mean(sampled_points, axis=0)
+        sampled_points = sampled_points - centroid
+        m = np.max(np.sqrt(np.sum(sampled_points ** 2, axis=1)))
+        normalized_points = sampled_points / (m + 1e-8)
+
+        # 3. Morton Sort (Z-order 커브 정렬)
+        sorted_points = PointFaceNet.morton_sort(normalized_points)
+
+        # 4. Convert to PyTorch Tensor: (N, 3) -> (3, N) -> 배치 차원 추가 (1, 3, N)
+        tensor = torch.from_numpy(sorted_points.astype(np.float32)).t().contiguous()
+        tensor = tensor.unsqueeze(0).to(device)
+        
+        return tensor

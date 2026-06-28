@@ -1,1 +1,1 @@
-from .pointface_dataset import get_dataloader
+from .pointface_dataset import PointFaceDataset, get_dataloader

@@ -31,8 +31,6 @@ class PointCloudAugmentation:
             if np.random.random() > 0.5:
                 points = self.random_dropout(points)
 
-        points = self.morton_sort(points)
-                
         # (N, 3) -> (3, N) for PyTorch Conv1d
         return torch.from_numpy(points.astype(np.float32)).transpose(1, 0)
 
@@ -60,9 +58,9 @@ class PointCloudAugmentation:
         return points + shift
 
     def random_rotate(self, points):
-        # Yaw: [-45, 45], Pitch: [-15, 15] 
-        theta_y = np.random.uniform(-45, 45) * np.pi / 180
-        theta_p = np.random.uniform(-15, 15) * np.pi / 180
+        # Yaw: [-20, 20], Pitch: [-10, 10]
+        theta_y = np.random.uniform(-20, 20) * np.pi / 180
+        theta_p = np.random.uniform(-10, 10) * np.pi / 180
         
         # Rotation Matrix (Yaw)
         rot_y = np.array([

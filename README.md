@@ -9,19 +9,14 @@
 이게 얼마나 성능이 나올까?에 대해 알아보고 클라이언트-서버 간 구조를 제시   
 *중앙대학교 2025학년도 동계 SW·AI학부연구생 프로그램 대상   
     
-2. **참조한 논문**
+2. **Base가 되는 논문**
 _**PointFace: Point Cloud Encoder-Based Feature Embedding for 3D Face Recognition**_      
 _Changyuan Jiang , Shisong Lin , Wei Chen , Feng Liu , Member, IEEE, and Linlin Shen , Senior Member, IEEE_      
 _IEEE TRANSACTIONS ON BIOMETRICS, BEHAVIOR, AND IDENTITY SCIENCE, VOL. 4, NO. 4, OCTOBER 2022_      
-해당 논문에서 제시하는 PointFace 아키텍처를 구현하고 이를 테스트함
+해당 논문에서 제시하는 PointFace 아키텍처를 구현하고 이를 HE-Friendly하게 수정해서 사용함
 
 
 ## B. Preliminary
-
-### - Cancelable Biometrics
-생체 인식 데이터를 암호화 기술을 사용하여 의도적으로 변형하고, 이 변형된 템플릿을 저장하여 사용하는 기술      
-원본 생체 정보를 그대로 저장하지 않으므로, 정보가 유출되더라도 해당 변형 함수를 변경하여 새로운 템플릿을 재발급할 수 있음
-
 
 ### - Homomorphic Encryption
 동형 암호(Homomorphic Encryption)이란, 암호문(Ciphertext)인 상태로 연산이 가능한 암호를 말함
@@ -37,55 +32,27 @@ Encryption(암호화)시에 r(noise, error)를 넣음
 그래서 연산 깊이(depth)를 정해놓는 경우가 있음
 => 이 횟수를 넘어가면 오차가 커져서 원래대로 복호화하지 못함
 
-### - BioHashing
-생체 정보와 토큰을 결합하여 보안성이 높고 Cancelable한 생체 템플릿을 생성하는 기술
-
-1. **특징 추출**
-얼굴, 지문 등에서 고정된 길이의 특징 벡터 $v$를 추출함
-
-2. **토큰 생성**
-토큰, 비밀번호로부터 시드(seed)를 얻음      
-해당 시드를 이용하여 Pseudo Random Number를 생성함      
-
-3. **직교 투영**
-Gaussian Distribution을 이용하여 랜덤 Matrix를 생성함
-Gram-Schmidt를 이용하여 Orthogonal Matrix $R$를 생성함      
-해당 Matrix를 생체 템플릿에 내적함
-$$
-x = R \cdot v
-$$
-
-4. **이진화**
-내적한 결과값이 0보다 크면 1, 작으면 0으로 변환함
-$$
-b_i = \begin{cases} 1 \ \ if \ \ x_i > \tau \\ 0 \ \ otherwise\end{cases}
-$$
-
-* 특이사항
-FAR, FRR이 감소하는 효과가 있음
-1. FAR(False Accept Rate)의 감소 이유
-개인의 특징 + 개인의 비밀 키(시드)라는 두 개의 요소가 필요하므로      
-비슷한 특징의 인물을 더이상 착각하지 않게 됨      
-
-2. FRR(False Reject Rate)의 감소 이유
-이진화를 거치게 되므로 인식 시의 노이즈가 흡수됨      
-등록된 템플릿과 약간 다르더라도 임계값에 따라 0, 1로 분류되므로 FRR이 감소하게 됨     
 
 ## C. Overall Architecture
-<img src="/docs/Overall_Architecture.jpg" width="100%" height="100%" title="Overall_Architecture" alt="Overall_Architecture"></img>
+<img src="/docs/figure1.png" width="100%" height="100%" title="Overall_Architecture" alt="Overall_Architecture"></img>
 _**Figure 1.** Overall Architecture_        
 
-Feature Extractor의 Relation Shape Convolution은 두 개의 모듈로 구성되어 있음(Set Abstraction, RSConv)
-<img src="/docs/RSConv.jpg" width="100%" height="100%" title="RSConv" alt="RSConv"></img>
-_**Figure 2.** Relation Shape Convolution_        
+Feature Extractor은 ShuffleNet의 아이디어를 적용한 Convolution Block이 적용되어 있음
+<img src="/docs/figure2.png" width="100%" height="100%" title="RSConv" alt="Overall Pipeline"></img>
+_**Figure 2.** Overall Pipeline_        
 
 ## D. Experiment
 
 ### - Dataset
 **UMB-DB**    
-143명 (남 98, 여 45; 쌍둥이 남자, 아기 포함)     
+143명 
 1473 total acquisitions (3D + colour 2D)      
 120명의 데이터를 학습에 사용, 나머지 23명의 데이터를 추론에 사용함      
+
+**FaceScape**    
+847명 * 20개의 표정     
+16940 total acquisitions (3D)      
+700명의 데이터를 학습에 사용, 나머지 147명의 데이터를 추론에 사용함      
 
 ### - Encoder Training
 120명의 데이터, 1251 쌍의 데이터 셋을 가지고 학습함      
@@ -93,11 +60,11 @@ PointFace에서 언급한 대로, Siamese Network를 이용함
 <img src="/docs/Training.jpg" width="100%" height="100%" title="Training" alt="Training"></img>
 _**Figure 3.** Training Architecture_        
 
-Loss Function은 다음과 같음 (Contrastive Loss, PointFace 참조)
-$$L_{Total} = L_{softmax} + \lambda L_{sim}$$      
+Loss Function은 다음과 같음
+$$L_{Total} = L_{CE} + 0.5 \times L_{SupCon}$$      
 
-$L_{softmax} = loss(x, class) = -\log(\frac{ \exp(x_ {class}) } { \sum_{j} \exp (x_{j}) }) = -S_t + \log \sum_1^j \exp(x_i)$      
-$L_{sim} = \sum_{i=1}^{N_s}[1 - \mathcal D(emb_i, emb_i^+) + \mathcal D(emb_i, emb_i^-) - m]$     
+$L_{CE} = CrossEntropy(x, class) $      
+$L_{SupCon} = Σᵢ [ -1/|Pᵢ| · Σ_{p∈Pᵢ} log( exp(zᵢ·zₚ/τ) / Σ_{a≠i} exp(zᵢ·zₐ/τ) ) ] $     
 $\lambda = 1, margin = 0.35$      
 
 ```python
@@ -113,14 +80,26 @@ optimizer = optim.Adam(model.parameters(), lr=0.001)
 ```
 
 
-**Unseen Test**
+### Unseen Test
 모델이 잘 학습되었는지를 확인하기 위해서 Unseen Test를 수행      
 학습에 사용하지 않은 23명의 데이터를 이용해서 얼굴 쌍에 대해 유사도를 계산함
-<img src="/docs/unseen_test_result_200.png" width="100%" height="100%" title="epoch_200_unseen_test_result" alt="epoch_200_unseen_test_result"></img>
-_**Figure 4.** Unseen Test (200 Epoch)_        
+<img src="/docs/unseen_test_result_facescape_600.png" width="100%" height="100%" title="unseen_test_result_facescape_600" alt="unseen_test_result_facescape_600"></img>
+_**Figure 4.** Unseen Test (600 Epoch)_        
 
-부정 쌍에 대해서는 유사도가 낮고 긍정 쌍에 대해서는 유사도가 높음      
-어느 정도 인물의 특징을 잘 구분할 수는 있으나, 긍정 쌍(동일 인물)을 구분해내는 능력이 부족하다고 판단됨      
+#### Result on Unseen Data
+- Best Threshold (max accuracy) : 0.895  Acc: 99.77%
+- EER Threshold                 : 0.737  EER: 3.33%  (FAR=3.33%, FRR=3.34%)
+
+#### FRR / FAR at key thresholds
+
+|  threshold  |   FAR   |  FRR  |
+|:-------:|:--------:|:--------:|
+|  0.80  |   1.12 %   |   7.39 %   |
+|  0.85  |   0.32 %   |   14.67 %   |
+|  0.88  |   0.12 %   |   21.60 %   |
+|  0.90  |   0.04 %   |   29.12 %   |
+|  0.92  |   0.01 %   |   38.23 %   |
+|  0.95  |   0.00 %   |   56.60 %   |
 
 **Rank-1 Accuracy**
 학습에 사용하지 않은 23명의 데이터를 이용해서 Rank-1 Accuracy를 계산
@@ -296,6 +275,20 @@ Feature Extractor의 맨 마지막 FC Layer를 서버로 옮기는 구조를 생
 
 2. _Colombo, A., Cusano, C., & Schettini, R. (2011). "UMB-DB: A database of partially occluded 3D faces." 2011 IEEE International Conference on Computer Vision Workshops (ICCV Workshops), 2113-2119._
 
-3. _Qi, Charles R and Yi, Li and Su, Hao and Guibas, Leonidas J, "PointNet++: Deep Hierarchical Feature Learning on Point Sets in a Metric Space,", arXiv preprint arXiv:1706.02413, 2017_
+3. _Qi, C. R., Yi, L., Su, H., & Guibas, L. J. (2017). PointNet++: Deep Hierarchical Feature Learning on Point Sets in a Metric Space. arXiv. https://doi.org/10.48550/arxiv.1706.02413_
 
-4. _Andrew Teoh Beng Jin, David Ngo Chek Ling, Alwyn Goh, "Biohashing: two factor authentication featuring fingerprint data and tokenised random number," Pattern Recognition, Volume 37, Issue 11, 2004, Pages 2245-2255_
+4. _Jin, A. T. B., Ling, D. N. C., & Goh, A. (2004). Biohashing: two factor authentication featuring fingerprint data and tokenised random number. Pattern Recognition, 37, 2245-2255. https://doi.org/10.1016/j.patcog.2004.04.011_
+
+5. _Khosla, P., Teterwak, P., Wang, C., et al. (2020). Supervised Contrastive Learning. arXiv. https://doi.org/10.48550/arxiv.2004.11362_
+
+6. _Park, J., Kim, M. J., Jung, W., & Ahn, J. H. (2022). AESPA: Accuracy Preserving Low-degree Polynomial Activation for Fast Private Inference. arXiv. https://doi.org/10.48550/arxiv.2201.06699_
+
+7. _Zhang, X., Zhou, X., Lin, M., & Sun, J. (2018). ShuffleNet: An Extremely Efficient Convolutional Neural Network for Mobile Devices. 2018 IEEE/CVF Conference on Computer Vision and Pattern Recognition. https://doi.org/10.1109/cvpr.2018.00716_
+
+8. _W. Ao and V. N. Boddeti, "CryptoFace: End-To-End Encrypted Face Recognition," 2025 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), Nashville, TN, USA, 2025, pp. 19197-19206, doi: 10.1109/CVPR52734.2025.01788._
+
+9. _J. Lee, E. Lee, J. -W. Lee, Y. Kim, Y. -S. Kim and J. -S. No, "Precise Approximation of Convolutional Neural Networks for Homomorphically Encrypted Data," in IEEE Access, vol. 11, pp. 62062-62076, 2023, doi: 10.1109/ACCESS.2023.3287564._
+
+10. _H. Yang et al., "FaceScape: A Large-Scale High Quality 3D Face Dataset and Detailed Riggable 3D Face Prediction," 2020 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), Seattle, WA, USA, 2020, pp. 598-607, doi: 10.1109/CVPR42600.2020.00068._
+
+11. _X. Wu et al., "Point Transformer V3: Simpler, Faster, Stronger," 2024 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), Seattle, WA, USA, 2024, pp. 4840-4851, doi: 10.1109/CVPR52733.2024.00463._

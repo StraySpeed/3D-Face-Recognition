@@ -1,100 +1,124 @@
 import torch
 import numpy as np
-import os
+import os, glob
 from model.pointface import PointFaceNet
 from config import CONFIG
+
+
+def _latest_checkpoint(ckpt_dir):
+    files = glob.glob(os.path.join(ckpt_dir, "pointface_epoch_*.pth"))
+    if not files:
+        raise FileNotFoundError(f"No checkpoint found in {ckpt_dir}")
+    return max(files, key=lambda p: int(os.path.splitext(p)[0].split('_')[-1]))
+
 
 class Rank1Evaluator:
     def __init__(self, model_path, device='cpu'):
         self.device = torch.device(device)
-        self.model = PointFaceNet(num_classes=143).to(self.device)
-        
-        checkpoint = torch.load(model_path, map_location=self.device)
-        state_dict = checkpoint['model_state_dict'] if 'model_state_dict' in checkpoint else checkpoint
-        self.model.load_state_dict(state_dict)
+        self.num_points = CONFIG["MODEL"]["num_points"]
 
+        self.model = PointFaceNet(
+            feature_dim=CONFIG["MODEL"]["feature_dim"]
+        ).to(self.device)
+
+        checkpoint = torch.load(model_path, map_location=self.device)
+        self.model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
         self.model.eval()
+        print(f"Model loaded: {model_path}")
 
     def extract_embedding(self, npy_path):
-        if not os.path.exists(npy_path): return None
+        if not os.path.exists(npy_path):
+            return None
         try:
             points = np.load(npy_path)[:, :3]
-            pre_data = PointFaceNet.preprocess(points, device=self.device)
+            pre_data = PointFaceNet.preprocess(
+                points, num_points=self.num_points, device=str(self.device)
+            )
             with torch.no_grad():
                 emb = self.model(pre_data).cpu().numpy().flatten()
-            # L2 Normalize
-            return emb / np.linalg.norm(emb)
+            norm = np.linalg.norm(emb)
+            return emb / norm if norm > 1e-8 else emb
         except Exception as e:
+            print(f"  Error: {npy_path}: {e}")
             return None
 
-    def evaluate(self, data_root):
+    def evaluate(self, data_root, gallery_per_id=1):
         """
-        Rank-1 Accuracy 측정
+        Rank-1 Accuracy 측정.
+
+        각 ID에서 앞 gallery_per_id개 파일을 Gallery,
+        나머지를 Probe로 사용한다.
+        Neutral 표정 파일(_NE_)이 있으면 Gallery 우선 배치.
         """
-        gallery_feats = []  # [(embedding, label_id), ...]
-        probe_feats = []    # [(embedding, label_id), ...]
-        
-        identities = sorted([d for d in os.listdir(data_root) 
-                             if os.path.isdir(os.path.join(data_root, d))])
-        
-        print(f"Extracting features from {len(identities)} identities...")
-        
+        identities = sorted([
+            d for d in os.listdir(data_root)
+            if os.path.isdir(os.path.join(data_root, d)) and not d.startswith('.')
+        ])
+        print(f"Extracting embeddings from {len(identities)} identities "
+              f"(gallery_per_id={gallery_per_id})...")
+
+        gallery_embs, gallery_ids = [], []
+        probe_embs,   probe_ids   = [], []
+
         for idx, identity in enumerate(identities):
             person_dir = os.path.join(data_root, identity)
-            files = sorted([f for f in os.listdir(person_dir) if f.endswith('.npy')])
-            
+            files = sorted([
+                f for f in os.listdir(person_dir)
+                if f.endswith('.npy') and not f.startswith('.')
+            ])
             if len(files) < 2:
-                continue # 비교할 대상이 없으면 스킵
-            
-            # 1. First file -> Gallery
-            gal_path = os.path.join(person_dir, files[0])
-            gal_emb = self.extract_embedding(gal_path)
-            if gal_emb is not None:
-                gallery_feats.append((gal_emb, idx)) # idx를 라벨로 사용
-            
-            # 2. Rest files -> Probes
-            for f in files[1:]:
-                prob_path = os.path.join(person_dir, f)
-                prob_emb = self.extract_embedding(prob_path)
-                if prob_emb is not None:
-                    probe_feats.append((prob_emb, idx))
-                    
-        # Matrix 연산을 위해 Stack
-        if not gallery_feats or not probe_feats:
-            print(f"{len(gallery_feats)} gallery feats, {len(probe_feats)} probe feats.")
-            return
+                continue
 
-        gallery_matrix = np.array([f[0] for f in gallery_feats]) # (G, 512)
-        gallery_labels = np.array([f[1] for f in gallery_feats]) # (G,)
-        
-        probe_matrix = np.array([f[0] for f in probe_feats])     # (P, 512)
-        probe_labels = np.array([f[1] for f in probe_feats])     # (P,)
-        
-        print(f"Evaluating Rank-1 Accuracy (Gallery: {len(gallery_feats)}, Probes: {len(probe_feats)})...")
-        
-        # Cosine Similarity Matrix: (P, G)
-        # Probe i와 Gallery j의 유사도 = sim_matrix[i][j]
-        sim_matrix = np.dot(probe_matrix, gallery_matrix.T)
-        
-        # 각 Probe에 대해 가장 높은 점수를 가진 Gallery 인덱스 찾기
-        pred_indices = np.argmax(sim_matrix, axis=1) # (P,)
-        
-        # 예측된 Gallery의 라벨 가져오기
-        pred_labels = gallery_labels[pred_indices]
-        
-        # 정확도 계산
-        correct = np.sum(pred_labels == probe_labels)
-        total = len(probe_labels)
+            # Neutral 파일(_NE_)을 앞으로 정렬
+            neutral = [f for f in files if '_NE_' in f]
+            others  = [f for f in files if '_NE_' not in f]
+            ordered = neutral + others
+
+            gal_files   = ordered[:gallery_per_id]
+            probe_files = ordered[gallery_per_id:]
+
+            for f in gal_files:
+                emb = self.extract_embedding(os.path.join(person_dir, f))
+                if emb is not None:
+                    gallery_embs.append(emb)
+                    gallery_ids.append(idx)
+
+            for f in probe_files:
+                emb = self.extract_embedding(os.path.join(person_dir, f))
+                if emb is not None:
+                    probe_embs.append(emb)
+                    probe_ids.append(idx)
+
+        if not gallery_embs or not probe_embs:
+            print(f"Insufficient data: {len(gallery_embs)} gallery, "
+                  f"{len(probe_embs)} probes.")
+            return None
+
+        G = np.array(gallery_embs)   # (N_g, feature_dim)
+        P = np.array(probe_embs)     # (N_p, feature_dim)
+        gl = np.array(gallery_ids)
+        pl = np.array(probe_ids)
+
+        print(f"Gallery: {len(G)}  Probes: {len(P)}  "
+              f"feature_dim: {G.shape[1]}")
+
+        # Cosine similarity matrix (P, G)
+        sim_matrix  = P @ G.T
+        pred_labels = gl[np.argmax(sim_matrix, axis=1)]
+
+        correct  = int(np.sum(pred_labels == pl))
+        total    = len(pl)
         accuracy = correct / total * 100
-        
-        print(f" Rank-1 Accuracy: {accuracy:.2f}% ({correct}/{total})")
 
-
+        print(f"Rank-1 Accuracy: {accuracy:.2f}%  ({correct}/{total})")
         return accuracy
 
+
 if __name__ == "__main__":
-    MODEL_FILE = os.path.join(CONFIG["PATH"]["checkpoint_dir"], "pointface_epoch_200.pth")
+    CKPT_DIR = CONFIG["PATH"]["checkpoint_dir"]
     DATA_DIR = CONFIG["PATH"]["gallery_dir"]
-    
-    evaluator = Rank1Evaluator(MODEL_FILE, device=CONFIG["DEVICE"])
-    evaluator.evaluate(DATA_DIR)
+
+    model_path = _latest_checkpoint(CKPT_DIR)
+
+    evaluator = Rank1Evaluator(model_path, device=CONFIG["DEVICE"])
+    evaluator.evaluate(DATA_DIR, gallery_per_id=1)
