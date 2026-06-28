@@ -159,11 +159,12 @@ if __name__ == "__main__":
         exit()
     pth_files = sorted([
         f for f in os.listdir(MODEL_PATH)
-        if f.startswith('pointface2_epoch_') and f.endswith('.pth')
+        if f.startswith('pointface_epoch_') and f.endswith('.pth')
     ])
     if not pth_files:
         print(f"Error: No checkpoint found in {MODEL_PATH}")
         exit()
+    #pth_files = ["pointface_epoch_400.pth"]
     model_path = os.path.join(MODEL_PATH, pth_files[-1])
     print(f"Using checkpoint: {model_path}")
 

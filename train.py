@@ -162,8 +162,8 @@ if __name__ == '__main__':
 
     start_epoch = 0
     # 이어서 학습하려면 아래 두 줄 주석 해제 (true resume — LR schedule 그대로 이어감)
-    # CHECKPOINT_PATH = os.path.join(savepath, "pointface_epoch_200.pth")
-    # start_epoch = resume_from_checkpoint(CHECKPOINT_PATH)
+    CHECKPOINT_PATH = os.path.join(savepath, "pointface_epoch_200.pth")
+    start_epoch = resume_from_checkpoint(CHECKPOINT_PATH)
 
     n_params = sum(p.numel() for p in model.parameters())
     print(f"[model] params: {n_params/1e6:.3f}M, feature_dim={feature_dim}, num_points={num_points}")
