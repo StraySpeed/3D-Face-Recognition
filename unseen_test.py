@@ -2,8 +2,8 @@ import torch
 import numpy as np
 import os
 import matplotlib.pyplot as plt
-from enc_model.loader import get_dataloader
-from enc_model.pointface import PointFaceNet
+from model.loader import get_dataloader
+from model.pointface import PointFaceNet
 from config import CONFIG
 
 def get_test_identities(data_root):

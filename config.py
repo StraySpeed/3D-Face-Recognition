@@ -9,7 +9,7 @@ CONFIG = {
     # 1. 데이터 및 경로 설정
     "PATH": {
         "data_root": os.path.join(BASE_DIR, "dataset/umbdb"),   # 학습용 데이터 경로
-        "checkpoint_dir": os.path.join(BASE_DIR, "checkpoints1"),    # 체크포인트 경로
+        "checkpoint_dir": os.path.join(BASE_DIR, "checkpoints1_umbdb"),    # 체크포인트 경로
         "gallery_dir": os.path.join(BASE_DIR, "dataset_matching/umbdb_unpreprocessed"), # 매칭할 얼굴 데이터 경로
         "gallery_storage": os.path.join(BASE_DIR, "gallery_storage1/umbdb"), # 미리 저장된 얼굴 데이터 경로
         "gallery_storage_bio": os.path.join(BASE_DIR, "gallery_storage1/umbdb_biocode"), # 미리 저장된 얼굴 데이터 경로

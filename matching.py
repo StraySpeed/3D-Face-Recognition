@@ -263,10 +263,10 @@ if __name__ == "__main__":
     THRESHOLD = CONFIG["MATCHING"]["threshold"]
 
     # 2. 인식기 초기화
-    recognizer = FaceRecognizer(MODEL_PATH, device='cpu')
+    recognizer = FaceRecognizer(MODEL_PATH, device='cuda')
     
     # 3. 갤러리 등록
-    #recognizer.register_gallery(GALLERY_DIR)
+    #recognizer.register_gallery(MATCHING_DIR)
     # 저장된 데이터가 있으면 로드
     recognizer.load_gallery_individual(DATABASE_DIR)
 
