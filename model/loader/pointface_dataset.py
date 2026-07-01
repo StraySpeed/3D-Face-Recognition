@@ -27,18 +27,20 @@ class PointFaceDataset(Dataset):
     def _load_data(self, root):
         # 폴더 구조를 읽어서 ID별로 파일 경로를 저장
         subjects = {}
-        # 폴더명이 ID (0, 1, 2...)
         if not os.path.exists(root):
-            return {} # 빈 딕셔너리 반환
+            return {}
 
-        for label_idx, folder_name in enumerate(sorted(os.listdir(root))):
+        label_idx = 0
+        for folder_name in sorted(os.listdir(root)):
             folder_path = os.path.join(root, folder_name)
             if not os.path.isdir(folder_path):
-                continue
-            
+                continue  # .DS_Store, README 등 비디렉토리 항목 건너뜀
+
             files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.npy')]
             if len(files) > 0:
                 subjects[label_idx] = sorted(files)
+                label_idx += 1  # 유효한 subject에만 증가
+
         return subjects
 
     def _generate_pairs(self):

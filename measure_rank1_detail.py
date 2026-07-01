@@ -322,7 +322,6 @@ def main():
     FACESCAPE_DATA = os.path.join(BASE, 'dataset_matching', 'facescape')
     UMBDB_CKPT_DIR = os.path.join(BASE, 'checkpoints1_umbdb')
     FS_CKPT_DIR    = os.path.join(BASE, 'checkpoints1_facescape')
-    UMBDB_CKPT_DIR = FS_CKPT_DIR
 
     if args.dataset in ('umbdb', 'all'):
         ckpt = args.ckpt_umbdb or _latest_checkpoint(UMBDB_CKPT_DIR)
