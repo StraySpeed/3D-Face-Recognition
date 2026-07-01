@@ -8,19 +8,16 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG = {
     # 1. 데이터 및 경로 설정
     "PATH": {
-        "data_root": os.path.join(BASE_DIR, "dataset/umbdb"),   # 학습용 데이터 경로
-        "checkpoint_dir": os.path.join(BASE_DIR, "checkpoints1_umbdb"),    # 체크포인트 경로
-        "gallery_dir": os.path.join(BASE_DIR, "dataset_matching/umbdb_unpreprocessed"), # 매칭할 얼굴 데이터 경로
-        "gallery_storage": os.path.join(BASE_DIR, "gallery_storage1/umbdb"), # 미리 저장된 얼굴 데이터 경로
-        "gallery_storage_bio": os.path.join(BASE_DIR, "gallery_storage1/umbdb_biocode"), # 미리 저장된 얼굴 데이터 경로
-        "gallery_storage_enc": os.path.join(BASE_DIR, "gallery_storage1/umbdb_enc"), # 미리 저장된 얼굴 데이터 경로 
-        "secret.context": os.path.join(BASE_DIR, "gallery_storage0_enc/secret.context")
+        "data_root": os.path.join(BASE_DIR, "dataset/facescape"),   # 학습용 데이터 경로
+        "checkpoint_dir": os.path.join(BASE_DIR, "checkpoints1_facescape"),    # 체크포인트 경로
+        "gallery_dir": os.path.join(BASE_DIR, "dataset_matching/facescape"), # 매칭할 얼굴 데이터 경로
+        "gallery_storage": os.path.join(BASE_DIR, "gallery_storage1/facescape"), # 미리 저장된 얼굴 데이터 경로
     },
     
     # 2. 학습(Training) 하이퍼파라미터
     "TRAIN": {
         "epochs": 200,  # 에포크 수
-        "batch_size": 32,   # 배치 크기
+        "batch_size": 64,   # 배치 크기
         "learning_rate": 0.001, # 초기 학습률
         "num_workers": 4,   # 워커 개수
         "lambda_factor": 1.0, # Loss 가중치
@@ -29,7 +26,7 @@ CONFIG = {
     
     # 3. 모델(Model) 기본 설정
     "MODEL": {
-        "num_classes": 143, # 분류 개수 (모델 학습에만 필요한 파라미터. feature 추출에는 상관 X)
+        "num_classes": 700, # 분류 개수 (모델 학습에만 필요한 파라미터. feature 추출에는 상관 X)
         "input_channel": 3,  # 기본 좌표(x,y,z)
         "num_points": 5000,   # 점의 개수
         "feature_dim": 512    # 최종 특징 차원

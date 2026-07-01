@@ -76,11 +76,15 @@ def _cat_facescape(fname: str) -> str:
 
 def _load_model(model_path: str, num_classes: int, device: torch.device):
     from model.pointface import PointFaceNet
+    ckpt  = torch.load(model_path, map_location=device)
+    state = ckpt.get('model_state_dict', ckpt)
+    # Infer num_classes from the checkpoint so it always matches
+    if 'classifier.weight' in state:
+        num_classes = state['classifier.weight'].shape[0]
     net = PointFaceNet(num_classes=num_classes).to(device)
-    ckpt = torch.load(model_path, map_location=device)
-    net.load_state_dict(ckpt.get('model_state_dict', ckpt))
+    net.load_state_dict(state)
     net.eval()
-    print(f"  로드 완료: {os.path.basename(model_path)}")
+    print(f"  로드 완료: {os.path.basename(model_path)} (num_classes={num_classes})")
     return net
 
 
@@ -318,7 +322,7 @@ def main():
     FACESCAPE_DATA = os.path.join(BASE, 'dataset_matching', 'facescape')
     UMBDB_CKPT_DIR = os.path.join(BASE, 'checkpoints1_umbdb')
     FS_CKPT_DIR    = os.path.join(BASE, 'checkpoints1_facescape')
-    FS_CKPT_DIR = UMBDB_CKPT_DIR
+    UMBDB_CKPT_DIR = FS_CKPT_DIR
 
     if args.dataset in ('umbdb', 'all'):
         ckpt = args.ckpt_umbdb or _latest_checkpoint(UMBDB_CKPT_DIR)

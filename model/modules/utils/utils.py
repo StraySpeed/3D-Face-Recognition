@@ -96,6 +96,96 @@ if _TRITON_AVAILABLE:
         _fps_kernel[(B,)](xyz_c, out, dist, start, N, npoint, BLOCK_N=BLOCK_N)
         return out.long()
 
+    # ────────────────────────────────────────────────
+    #  Triton Ball Query kernel
+    #  One program per (batch, centroid) pair.
+    #  Tiles N input points in BLOCK_N chunks —
+    #  no (B, S, N) intermediate tensor allocated.
+    # ────────────────────────────────────────────────
+    @triton.jit
+    def _ball_query_kernel(
+        xyz_ptr,               # (B, N, 3) float32 contiguous
+        ctr_ptr,               # (B*S, 3)  float32 contiguous
+        out_ptr,               # (B*S*nsample,) int32 — pre-filled with N (sentinel)
+        radius_sq,             # float32 = radius²
+        N,                     # runtime: input points per batch element
+        S,                     # runtime: centroids per batch element
+        nsample: tl.constexpr, # compile-time: neighbours to collect (e.g. 32)
+        BLOCK_N: tl.constexpr, # compile-time: tile width
+    ):
+        bs    = tl.program_id(0)       # ∈ [0, B*S)
+        b     = bs // S
+        xyz_b  = xyz_ptr + b  * N * 3  # base of batch b's points
+        ctr_bs = ctr_ptr + bs * 3      # this centroid's xyz
+        out_bs = out_ptr + bs * nsample
+
+        cx = tl.load(ctr_bs + 0)
+        cy = tl.load(ctr_bs + 1)
+        cz = tl.load(ctr_bs + 2)
+
+        n_blk = tl.cdiv(N, BLOCK_N)
+
+        # count: 0-d int32 accumulator — how many valid neighbours stored so far
+        count = tl.sum(tl.zeros([1], dtype=tl.int32), axis=0)
+
+        for bn in range(n_blk):
+            offs = bn * BLOCK_N + tl.arange(0, BLOCK_N)
+            mask = offs < N
+
+            px = tl.load(xyz_b + offs * 3 + 0, mask=mask, other=cx)
+            py = tl.load(xyz_b + offs * 3 + 1, mask=mask, other=cy)
+            pz = tl.load(xyz_b + offs * 3 + 2, mask=mask, other=cz)
+
+            dx = px - cx; dy = py - cy; dz = pz - cz
+            d2 = dx*dx + dy*dy + dz*dz
+
+            valid = (d2 <= radius_sq) & mask          # (BLOCK_N,) bool
+
+            # 0-indexed rank of each valid element within this tile
+            loc  = tl.cumsum(valid.to(tl.int32), axis=0) - 1  # (BLOCK_N,) int32
+            gpos = count + loc                                  # global write pos
+
+            # Clamp address for inactive lanes (negative gpos) to avoid UB
+            gpos_safe = tl.where(gpos >= 0, gpos, 0)
+
+            write = valid & (gpos >= 0) & (gpos < nsample)
+            tl.store(out_bs + gpos_safe, offs.to(tl.int32), mask=write)
+
+            count = count + tl.sum(valid.to(tl.int32), axis=0)
+
+    def _ball_query_triton(radius: float, nsample: int,
+                           xyz: torch.Tensor, new_xyz: torch.Tensor) -> torch.Tensor:
+        """
+        xyz     : (B, N, 3) float32 CUDA
+        new_xyz : (B, S, 3) float32 CUDA
+        returns : (B, S, nsample) long
+        """
+        B, N, _ = xyz.shape
+        _, S, _ = new_xyz.shape
+
+        xyz_c = xyz.contiguous()
+        ctr_c = new_xyz.contiguous().view(B * S, 3)
+
+        # Pre-fill with N (sentinel = "no valid neighbour")
+        out = torch.full((B * S * nsample,), N, dtype=torch.int32, device=xyz.device)
+
+        BLOCK_N = 256
+        _ball_query_kernel[(B * S,)](
+            xyz_c, ctr_c, out,
+            float(radius ** 2),
+            N, S,
+            nsample=nsample,
+            BLOCK_N=BLOCK_N,
+        )
+
+        out = out.view(B, S, nsample).long()
+
+        # Replace sentinel N with first valid entry; clamp for the degenerate
+        # case where no points fall within radius (original has the same behaviour)
+        first_safe = out[:, :, 0].clamp(max=N - 1).unsqueeze(-1).expand_as(out)
+        out = torch.where(out >= N, first_safe, out)
+        return out
+
 
 def _fps_pytorch(xyz: torch.Tensor, npoint: int) -> torch.Tensor:
     """Optimised pure-PyTorch fallback (CPU or non-float32 input)."""
@@ -162,22 +252,30 @@ def index_points(points, idx):
 
 
 def query_ball_point(radius, nsample, xyz, new_xyz):
+    # Triton path: no (B, S, N) intermediate tensor
+    if _TRITON_AVAILABLE and xyz.is_cuda and xyz.dtype == torch.float32:
+        return _ball_query_triton(radius, nsample, xyz, new_xyz)
+
+    # PyTorch fallback: chunked + topk to limit peak memory
     device = xyz.device
-    B, N, C = xyz.shape
+    B, N, _ = xyz.shape
     _, S, _ = new_xyz.shape
+    r2 = radius ** 2
 
-    sqrdists = square_distance(new_xyz, xyz)
+    CHUNK = 256
+    out = torch.empty(B, S, nsample, dtype=torch.long, device=device)
 
-    group_idx = (torch.arange(N, dtype=torch.long, device=device)
-                 .view(1, 1, N).repeat(B, S, 1))
-    group_idx[sqrdists > radius ** 2] = N
+    for s0 in range(0, S, CHUNK):
+        s1   = min(s0 + CHUNK, S)
+        dists = square_distance(new_xyz[:, s0:s1], xyz)         # (B, chunk, N)
+        idx   = torch.arange(N, device=device).view(1, 1, N).expand(B, s1-s0, N).clone()
+        idx[dists > r2] = N
+        idx = idx.topk(nsample, dim=-1, largest=False)[0]       # (B, chunk, nsample)
+        first = idx[:, :, 0:1].expand_as(idx)
+        idx[idx == N] = first[idx == N]
+        out[:, s0:s1] = idx
 
-    group_idx  = group_idx.sort(dim=-1)[0][:, :, :nsample]
-    group_first = group_idx[:, :, 0].view(B, S, 1).repeat(1, 1, nsample)
-    mask = group_idx == N
-    group_idx[mask] = group_first[mask]
-
-    return group_idx
+    return out
 
 
 def sample_and_group(npoint, radius, nsample, xyz, points):
