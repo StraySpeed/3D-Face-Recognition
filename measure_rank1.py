@@ -6,7 +6,7 @@ from config import CONFIG
 
 
 def _latest_checkpoint(ckpt_dir):
-    files = glob.glob(os.path.join(ckpt_dir, "pointface_epoch_*.pth"))
+    files = glob.glob(os.path.join(ckpt_dir, "pointface_epoch_100.pth"))
     if not files:
         raise FileNotFoundError(f"No checkpoint found in {ckpt_dir}")
     return max(files, key=lambda p: int(os.path.splitext(p)[0].split('_')[-1]))

@@ -29,7 +29,7 @@ feature_dim  = DEFAULT_FEATURE_DIM
 num_points   = CONFIG["MODEL"]["num_points"]
 
 ARCFACE_S              = 32.0
-SUPCON_LAMBDA          = 0.5
+SUPCON_LAMBDA          = 1.0
 ARCFACE_MARGIN_MAX     = CONFIG["TRAIN"]["margin"]
 ARCFACE_WARMUP_EPOCHS  = CONFIG["TRAIN"]["arcface_margin_warmup_epochs"]
 
@@ -43,10 +43,13 @@ optimizer = optim.Adam([
     {'params': arcface_head.parameters(), 'lr': CONFIG["TRAIN"]["learning_rate"]},
 ], weight_decay=1e-4)
 
-scheduler = optim.lr_scheduler.CosineAnnealingLR(
+# Warm Restart: epoch 100, 300에서 LR 초기화 (100 → 200 → 400 epoch 주기)
+# CosineAnnealingLR 대비: local minimum 탈출, eta_min=1e-5로 LR 최저점 완화
+scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
     optimizer,
-    T_max=CONFIG["TRAIN"]["epochs"],
-    eta_min=1e-6,
+    T_0=100,
+    T_mult=2,
+    eta_min=1e-5,
 )
 
 
@@ -162,7 +165,7 @@ if __name__ == '__main__':
 
     start_epoch = 0
     # 이어서 학습하려면 아래 두 줄 주석 해제 (true resume — LR schedule 그대로 이어감)
-    #CHECKPOINT_PATH = os.path.join(savepath, "pointface_epoch_110.pth")
+    #CHECKPOINT_PATH = os.path.join(savepath, "pointface_epoch_200.pth")
     #start_epoch = resume_from_checkpoint(CHECKPOINT_PATH)
 
     n_params = sum(p.numel() for p in model.parameters())

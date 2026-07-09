@@ -26,13 +26,15 @@ import glob
 import torch
 import numpy as np
 
+from config import CONFIG
+
 
 # ──────────────────────────────────────────────────────────────
 # 유틸리티
 # ──────────────────────────────────────────────────────────────
 
 def _latest_checkpoint(ckpt_dir: str) -> str:
-    files = glob.glob(os.path.join(ckpt_dir, "pointface_epoch_*.pth"))
+    files = glob.glob(os.path.join(ckpt_dir, "pointface_epoch_200.pth"))
     if not files:
         raise FileNotFoundError(f"체크포인트 없음: {ckpt_dir}")
     return max(files, key=lambda p: int(os.path.splitext(p)[0].split('_')[-1]))
@@ -295,8 +297,10 @@ def main():
                         help='UMBDB 체크포인트 경로 (미지정 시 최신 자동 선택)')
     parser.add_argument('--ckpt_facescape', default=None,
                         help='FaceScape 체크포인트 경로 (미지정 시 최신 자동 선택)')
-    parser.add_argument('--feature_dim',    type=int, default=512)
-    parser.add_argument('--num_points',     type=int, default=1024)
+    parser.add_argument('--feature_dim',    type=int,
+                        default=CONFIG["MODEL"]["feature_dim"])
+    parser.add_argument('--num_points',     type=int,
+                        default=CONFIG["MODEL"]["num_points"])
     parser.add_argument(
         '--device', default='cuda' if torch.cuda.is_available() else 'cpu'
     )
@@ -307,8 +311,8 @@ def main():
 
     UMBDB_DATA      = os.path.join(BASE, 'dataset_matching', 'umbdb_unpreprocessed')
     FACESCAPE_DATA  = os.path.join(BASE, 'dataset_matching', 'facescape')
-    UMBDB_CKPT_DIR  = os.path.join(BASE, 'checkpoints7_umbdb')
-    FS_CKPT_DIR     = os.path.join(BASE, 'checkpoints7_facescape')
+    UMBDB_CKPT_DIR  = os.path.join(BASE, 'checkpoints8_umbdb')
+    FS_CKPT_DIR     = os.path.join(BASE, 'checkpoints8_facescape')
 
     if args.dataset in ('umbdb', 'all'):
         ckpt = args.ckpt_umbdb or _latest_checkpoint(UMBDB_CKPT_DIR)

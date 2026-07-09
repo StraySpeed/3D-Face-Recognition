@@ -8,12 +8,12 @@ CONFIG = {
     # 1. 데이터 및 경로 설정
     "PATH": {
         "data_root": os.path.join(BASE_DIR, "dataset/umbdb"),
-        "checkpoint_dir": os.path.join(BASE_DIR, "checkpoints7_umbdb"),   # model2 전용 체크포인트
+        "checkpoint_dir": os.path.join(BASE_DIR, "checkpoints8_umbdb"),
         "gallery_dir": os.path.join(BASE_DIR, "dataset_matching/umbdb_unpreprocessed"),
-        "gallery_storage": os.path.join(BASE_DIR, "gallery_storage7/umbdb"),
-        "gallery_storage_enc": os.path.join(BASE_DIR, "gallery_storage7_enc/umbdb"),
-        "secret.context": os.path.join(BASE_DIR, "gallery_storage7_enc/secret.context"),
-        "key_dir": os.path.join(BASE_DIR, "gallery_storage7_enc/keys"),
+        "gallery_storage": os.path.join(BASE_DIR, "gallery_storage8/umbdb"),
+        "gallery_storage_enc": os.path.join(BASE_DIR, "gallery_storage8_enc/umbdb"),
+        "secret.context": os.path.join(BASE_DIR, "gallery_storage8_enc/secret.context"),
+        "key_dir": os.path.join(BASE_DIR, "gallery_storage8_enc/keys"),
     },
 
     # 2. 학습(Training) 하이퍼파라미터
@@ -31,7 +31,7 @@ CONFIG = {
     "MODEL": {
         "num_classes": 120,
         "input_channel": 3,
-        "num_points": 1024,
+        "num_points": 4096,
         "feature_dim": 512,
     },
 
